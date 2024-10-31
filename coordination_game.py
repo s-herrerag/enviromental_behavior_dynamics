@@ -21,6 +21,7 @@ Same goes for the anti-environmental agents.
 import mesa
 import random
 import numpy as np
+from mesa.datacollection import DataCollector
 
 ### Helpers ------------------------
 from helpers import trunc_normal_dist
@@ -37,7 +38,7 @@ class coordination_agent(mesa.Agent):
     3) a step in the game
     """
 
-    def __init__(self, unique_id, model, alpha = 1, theta = 1, convincement_type = "ticker"):
+    def __init__(self, unique_id, model, alpha = 1, theta = 1, convincement_type = "ticker", steps_convincement = 10):
         """
         Initializes a new instance of the coordination_agent class.
 
@@ -62,13 +63,24 @@ class coordination_agent(mesa.Agent):
         # In the basic scenario, agents use sample learning
         self.others_actions = []
 
+        # They also store the identities of others
+        self.others_identities = []
+
         # Store parameters
         self.alpha = alpha
         self.theta = theta
         self.convincement_type = convincement_type
+        self.steps_convincement = steps_convincement
+
+        # Define a threshold if convincement_type = "ticker"
+        self.threshold_convincement =  0.51 # Agents try to be like the majority
 
         # Also create an empty list for utilities
         self.utilities = []
+
+        # Finally, create a placeholder for alternative identities
+        self.alterego = self.assigned_group
+        self.alternative_utilities = []
 
     def utility(self, identity, consumption):
         """
@@ -124,18 +136,53 @@ class coordination_agent(mesa.Agent):
         self.max_believed_consumption = max(self.others_actions)
         self.mode_believed_consumption = calculate_mode_hist_midpoint(self.others_actions, bins=10)
 
-        # Choose consumption and update utility
+        # Update also the sample of identities (and believed shares)
+        self.others_identities.append(other_agent.assigned_group)
+
+        steps_taken = len(self.others_identities)
+        share_pro = self.others_identities.count("Pro - environment")/steps_taken
+        share_neutral = self.others_identities.count("Neutral")/steps_taken
+        share_anti = self.others_identities.count("Anti - environment")/steps_taken
+
+        # Choose consumption and update utilities
         consumption = self.consumption_selection(self.assigned_group)
         utility = self.utility(self.assigned_group, consumption)
         self.utilities.append(utility)
         self.history.append(consumption)
+
+        # Calculate utility for the alterego
+        consumption_alter = self.consumption_selection(self.alterego)
+        utility_alter = self.utility(self.alterego, consumption_alter)
+        self.alternative_utilities.append(utility_alter)
+
+
+        # Agents may change their group, depending on the mechanism of conversion
+        if steps_taken % self.steps_convincement == 0:
+
+            # First thing: if utilities are greater for the alter-ego, switch
+            if np.mean(self.utilities[-self.steps_convincement:]) < np.mean(self.alternative_utilities[-self.steps_convincement]):
+                self.assigned_group = self.alterego
+
+            if self.convincement_type == "ticker":
+                if share_pro >= self.threshold_convincement:
+                    self.alterego = "Pro - environment"
+                elif share_neutral >= self.threshold_convincement:
+                    self.alterego = "Neutral"
+                elif share_anti >= self.threshold_convincement:
+                    self.alterego = "Anti - environment"
+
+            elif self.convincement_type == "ranking_relatives":
+                pass
+            else:
+                pass 
+
 
 class coordination_model(mesa.Model):
     """
     A model with some number of agents.
     """
 
-    def __init__(self, N, alpha = 1, theta = 1, convincement_type = "ticker"):
+    def __init__(self, N, alpha = 1, theta = 1, convincement_type = "ticker", steps_convincement = 10):
         super().__init__()
         self.num_agents = N
         # Create scheduler and assign it to the model
@@ -143,14 +190,24 @@ class coordination_model(mesa.Model):
 
         # Create agents
         for i in range(self.num_agents):
-            a = coordination_agent(i, self, alpha = alpha, theta = theta, convincement_type = convincement_type)
+            a = coordination_agent(i, self, alpha = alpha, theta = theta, convincement_type = convincement_type, steps_convincement = steps_convincement)
             # Add the agent to the scheduler
             self.schedule.add(a)
+
+        # Initialize DataCollector
+        self.datacollector = DataCollector(
+            agent_reporters={
+                "Group": "assigned_group",
+                "Consumption": lambda a: a.history[-1],
+                "Utility": lambda a: a.utilities[-1] if a.utilities else None,
+            })
 
     def step(self):
         """
         Advance the model by one step.
         """
+        # Collect data
+        self.datacollector.collect(self)
         # The model's step will go here for now this will call the step method of each agent and print the agent's unique_id
         self.schedule.step()
 
