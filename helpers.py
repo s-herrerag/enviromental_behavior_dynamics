@@ -3,20 +3,41 @@
 #########################
 
 import numpy as np
-from scipy.stats import truncnorm
+from scipy.stats import truncnorm, uniform, norm  # Import other distributions as needed
 from scipy.optimize import minimize_scalar
 
 
+
+
 ### Distribution of initial consumption ------------------------
-mu = 55   # Mean
-sigma = 15  # Standard deviation
-lower, upper = 10, 100 # Lower and upper bounds
 
-# Calculate the a and b parameters for truncnorm
-a, b = (lower - mu) / sigma, (upper - mu) / sigma
+def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
+    """
+    Factory function to create different distribution objects.
 
-# Truncated normal distribution
-trunc_normal_dist = truncnorm(a, b, loc=mu, scale=sigma)
+    Parameters:
+    - dist_type (str): Type of distribution ('truncnorm', 'uniform', 'normal', etc.)
+    - mu (float): Mean of the distribution (used for normal and truncnorm)
+    - sigma (float): Standard deviation (used for normal and truncnorm)
+    - lower (float): Lower bound (used for truncnorm and uniform)
+    - upper (float): Upper bound (used for truncnorm and uniform)
+    - **kwargs: Additional keyword arguments for specific distributions
+
+    Returns:
+    - A scipy.stats distribution object
+    """
+    if dist_type == 'truncnorm':
+        a, b = (lower - mu) / sigma, (upper - mu) / sigma
+        return truncnorm(a, b, loc=mu, scale=sigma)
+    elif dist_type == 'uniform':
+        return uniform(loc=lower, scale=upper - lower)
+    elif dist_type == 'normal':
+        return norm(loc=mu, scale=sigma)
+    # Add more distributions as needed
+    else:
+        raise ValueError(f"Unsupported distribution type: {dist_type}")
+
+
 
 ### Estimation of the mode ------------------------
 def calculate_mode_hist_midpoint(array, bins=10):
@@ -50,33 +71,31 @@ def g_pro(x):
 def g_neutral(x):
     return 0
 
-def maximize_utility(alpha, x_hat, g):
+def maximize_utility(x_hat, g, lambda1, lambda2, s_i):
+    # Define the original function u(x) using the passed g(x)
     """
-    Finds the maximum of f(x) = alpha * x - (x - x_hat)^2 - g(x) numerically.
-    
+    Find the value of x that maximizes the utility function u(x) = lambda1 * x + lambda2 * s_i - (1 - lambda1 - lambda2) * misalignment_cost,
+    where misalignment_cost = (x - x_hat)**2 + g(x).
+
     Parameters:
-    - alpha (float): The coefficient of x in the function.
-    - x_hat (float): The reference value in the quadratic term.
-    - g (callable): A function representing g(x). It should take a single argument x.
-    
+    - x_hat (float): The believed estimate of the distribution
+    - g (callable): The function g(x) that is used in the misalignment cost
+    - lambda1 (float): The weight of the linear term in the utility
+    - lambda2 (float): The weight of the social influence term in the utility
+    - s_i (float): The status
+
     Returns:
-    - x_max (float): The value of x that maximizes f(x).
-    - f_max (float): The maximum value of f(x).
-    
+    - x_max (float): The value of x that maximizes the utility
+
     Raises:
-    - ValueError: If the optimization fails.
+    - ValueError: If the optimization fails
     """
-    # Define the original function f(x) using the passed g(x)
-    def f(x):
-        return alpha * x - (x - x_hat)**2 - g(x)
-    
-    # Since scipy.optimize minimizes, define the negative of f(x)
-    def neg_f(x):
-        return -f(x)
-    
-    # Perform the optimization
-    result = minimize_scalar(neg_f)
-    
+    def u(x):
+        misalignment_cost = (x - x_hat)**2 + g(x)
+        return lambda1 * x + lambda2 * s_i - (1 - lambda1 - lambda2) * misalignment_cost
+    def neg_u(x):
+        return -u(x)
+    result = minimize_scalar(neg_u, bounds=(0, 200), method='bounded')
     if result.success:
         x_max = result.x
         return x_max
