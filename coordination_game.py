@@ -22,7 +22,7 @@ import mesa
 import random
 import numpy as np
 from mesa.datacollection import DataCollector
-from scipy.stats import rankdata
+from scipy import stats
 
 
 ### Helpers ------------------------
@@ -31,7 +31,7 @@ from helpers import calculate_mode_hist_midpoint
 from helpers import g_pro, g_neutral, g_anti, maximize_utility
 
 # Choose consumption (later to be included as a parameter, if promising)
-consumption_dist = get_distribution(dist_type="uniform", lower=5, upper=200)
+consumption_dist = get_distribution(dist_type="uniform", lower=5, upper=100)
 
 ### Agents ------------------------
 class coordination_agent(mesa.Agent):
@@ -86,23 +86,31 @@ class coordination_agent(mesa.Agent):
         self.alterego = self.assigned_group
         self.alternative_utilities = []
 
-        
-        # Assign theta values based on the agent's assigned group
-        if self.assigned_group == "Pro - environment":
-            self.theta_pro = 0.5
-            self.theta_anti = 0.25
-        elif self.assigned_group == "Anti - environment":
-            self.theta_pro = 0.25
-            self.theta_anti = 0.5
-        else:  # Neutral
-            self.theta_pro = 0.33
-            self.theta_anti = 0.33
-        self.theta_neutral = 1 - self.theta_pro - self.theta_anti
-        
         # Placeholder for status component
         self.s_i = 0
+        self.alter_s_i = 0
+
+    def calculate_status(self, identity, rpro, ranti, rneutral):
+        """
+        Calculates the status of the agent. 
+
+        """
+        if identity == "Pro - environment":
+            theta_pro = 0.5
+            theta_anti = 0.25
+        elif identity == "Anti - environment":
+            theta_pro = 0.25
+            theta_anti = 0.5
+        else:  # Neutral
+            theta_pro = 1/3
+            theta_anti = 1/3
+        theta_neutral = 1 - theta_pro - theta_anti
+
+        status = theta_pro * rpro + theta_anti * ranti + theta_neutral * rneutral
+
+        return status
     
-    def utility(self, identity, consumption):
+    def utility(self, identity, consumption, status):
         """
         Calculates the utility of the agent based on the outcome or a belief about the game.
         It depends on the identity (the game played), and needs that the agent has already a belief.
@@ -116,20 +124,20 @@ class coordination_agent(mesa.Agent):
         if identity == "Pro - environment":
             x_hat = self.min_believed_consumption
             g_value = g_pro(consumption)
+
         elif identity == "Anti - environment":
             x_hat = self.max_believed_consumption
             g_value = g_anti(consumption)
+
         else:
             x_hat = self.mode_believed_consumption
             g_value = g_neutral(consumption)
         
-        misalignment_cost = (consumption - x_hat)**2 + g_value
-        u = (self.lambda1 * consumption +
-            self.lambda2 * self.s_i -
-            (1 - self.lambda1 - self.lambda2) * misalignment_cost)
+        misalignment_cost = - (consumption - x_hat)**2 + g_value
+        u = self.lambda1 * consumption + self.lambda2 * status + (1 - self.lambda1 - self.lambda2) * misalignment_cost
         return u
     
-    def consumption_selection(self, identity):
+    def consumption_selection(self, identity, status):
         """
         Agents choose consumption to maximize their utility.
         """
@@ -147,7 +155,7 @@ class coordination_agent(mesa.Agent):
             g=g_func,
             lambda1=self.lambda1,
             lambda2=self.lambda2,
-            s_i=self.s_i
+            s_i=status
         )
         return consumption
 
@@ -179,46 +187,34 @@ class coordination_agent(mesa.Agent):
         consumptions_array = np.array(all_consumptions)
         
         # Pro-environmental ranking: lower consumption gets higher rank
-        rpro = rankdata(consumptions_array, method='average')
-        rpro = len(consumptions_array) - rpro + 1  # Invert ranks
+        rpro_i = 100 - stats.percentileofscore(consumptions_array, self.history[-1])
         
         # Anti-environmental ranking: higher consumption gets higher rank
-        ranti = rankdata(consumptions_array, method='average')
+        ranti_i = stats.percentileofscore(consumptions_array, self.history[-1])
         
         # Neutral ranking: proximity to mode consumption
         mode_diff = np.abs(consumptions_array - self.mode_believed_consumption)
-        rneutral = rankdata(mode_diff, method='average')
-        rneutral = len(consumptions_array) - rneutral + 1  # Invert ranks
-        
-        # Agent's own rankings
-        rpro_i = rpro[-1]
-        ranti_i = ranti[-1]
-        rneutral_i = rneutral[-1]
-
-        # Normalize rankings
-        n_agents_in_sample = len(consumptions_array)
-        rpro_i_normalized = rpro_i / n_agents_in_sample
-        ranti_i_normalized = ranti_i / n_agents_in_sample
-        rneutral_i_normalized = rneutral_i / n_agents_in_sample
+        mode_ranks = 1 / (mode_diff + 1e-6)
+        self_mode_rank = mode_ranks[-1]
+        rneutral_i = stats.percentileofscore(mode_ranks, self_mode_rank)
         
         # Calculate s_i
-        self.s_i = (self.theta_pro * rpro_i_normalized +
-                    self.theta_anti * ranti_i_normalized +
-                    (1 - self.theta_pro - self.theta_anti) * rneutral_i_normalized)
+        self.s_i = self.calculate_status(self.assigned_group, rpro=rpro_i, ranti=ranti_i, rneutral=rneutral_i)
+        self.alter_s_i = self.calculate_status(self.alterego, rpro=rpro_i, ranti=ranti_i, rneutral=rneutral_i)
         
         # If convincement_type is 'ticker', set s_i = 0
         if self.convincement_type == 'ticker':
             self.s_i = 0
 
         ### Choose consumption and update utilities
-        consumption = self.consumption_selection(self.assigned_group)
-        utility = self.utility(self.assigned_group, consumption)
+        consumption = self.consumption_selection(self.assigned_group, self.s_i)
+        utility = self.utility(self.assigned_group, consumption, self.s_i)
         self.utilities.append(utility)
         self.history.append(consumption)
 
         # Calculate utility for the alterego
-        consumption_alter = self.consumption_selection(self.alterego)
-        utility_alter = self.utility(self.alterego, consumption_alter)
+        consumption_alter = self.consumption_selection(self.alterego, self.alter_s_i)
+        utility_alter = self.utility(self.alterego, consumption_alter, self.alter_s_i)
         self.alternative_utilities.append(utility_alter)
 
 
@@ -228,18 +224,6 @@ class coordination_agent(mesa.Agent):
             # First thing: if utilities are greater for the alter-ego, switch
             if np.mean(self.utilities[-self.steps_convincement:]) < np.mean(self.alternative_utilities[-self.steps_convincement]):
                 self.assigned_group = self.alterego
-                
-                # Update theta values based on new assigned group
-                if self.assigned_group == "Pro - environment":
-                    self.theta_pro = 0.5
-                    self.theta_anti = 0.25
-                elif self.assigned_group == "Anti - environment":
-                    self.theta_pro = 0.25
-                    self.theta_anti = 0.5
-                else:  # Neutral
-                    self.theta_pro = 0.33
-                    self.theta_anti = 0.33
-                self.theta_neutral = 1 - self.theta_pro - self.theta_anti
 
             if self.convincement_type == "ticker":
                 if share_pro >= self.threshold_convincement:
@@ -251,13 +235,12 @@ class coordination_agent(mesa.Agent):
 
             elif self.convincement_type == "ranking_relatives":
                 status_scores = {
-                "Pro - environment": self.theta_pro * rpro_i_normalized,
-                "Anti - environment": self.theta_anti * ranti_i_normalized,
-                "Neutral": self.theta_neutral * rneutral_i_normalized
+                "Pro - environment": rpro_i,
+                "Anti - environment": ranti_i,
+                "Neutral": rneutral_i
                 }
                 # Set alterego to the identity with the highest status score
                 self.alterego = max(status_scores, key=status_scores.get)
-            else:
                 pass 
 
 
