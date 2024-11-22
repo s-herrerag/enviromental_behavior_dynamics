@@ -90,6 +90,9 @@ class coordination_agent(mesa.Agent):
         self.s_i = 0
         self.alter_s_i = 0
 
+        # Bias
+        self.bias = random.uniform(0.5, 1)
+
     def calculate_status(self, identity, rpro, ranti, rneutral):
         """
         Calculates the status of the agent. 
@@ -169,9 +172,9 @@ class coordination_agent(mesa.Agent):
         self.others_actions.append(other_last_consumption)
 
         # Update beliefs based on observed actions
-        self.min_believed_consumption = min(self.others_actions)
-        self.max_believed_consumption = max(self.others_actions)
-        self.mode_believed_consumption = calculate_mode_hist_midpoint(self.others_actions, bins=10)
+        self.min_believed_consumption = min(self.others_actions) * self.bias
+        self.max_believed_consumption = max(self.others_actions) * self.bias
+        self.mode_believed_consumption = calculate_mode_hist_midpoint(self.others_actions, bins=10) * self.bias
 
         # Update also the sample of identities (and believed shares)
         self.others_identities.append(other_agent.assigned_group)
