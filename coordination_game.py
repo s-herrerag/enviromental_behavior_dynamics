@@ -91,7 +91,7 @@ class coordination_agent(mesa.Agent):
         self.alter_s_i = 0
 
         # Bias
-        self.bias = random.uniform(0.5, 1)
+        self.bias = random.uniform(0.85, 1.15)
 
     def calculate_status(self, identity, rpro, ranti, rneutral):
         """
