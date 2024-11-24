@@ -51,8 +51,8 @@ def calculate_mode_hist_midpoint(array, bins=10):
     Returns:
     - mode (float): The estimated mode as the midpoint of the most frequent bin.
     """
-    if not array:
-        return None  # Handle empty array
+    if len(array) == 0 or not array:
+        return None  # Handle empty array by returning None
 
     counts, bin_edges = np.histogram(array, bins=bins)
     max_bin_index = np.argmax(counts)
