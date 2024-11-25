@@ -2,20 +2,6 @@
 # Emissions / Coordination Game
 ################################
 
-"""
-There are three types of agents:
-1. Pro-environmental agents
-2. Anti-environmental agents
-3. Neutral agents
-
-Agents face a different game depending on their identities.
-
-All agents are playing a coordination game on consumption.
-
-Pro-environmental agents know what their consumption means in terms of emissions - g(c) = e -.
-Same goes for the anti-environmental agents.
-"""
-
 ### Libraries ------------------------
 
 import mesa
@@ -44,22 +30,6 @@ class coordination_agent(mesa.Agent):
 
     def __init__(self, unique_id, model, lambda1=1/3, lambda2=1/3, alpha=1, beta=2/3,
                  steps_convincement=10):
-        """
-        Initializes a new instance of the coordination_agent class.
-
-        Args:
-            unique_id (int): The unique identifier for the agent.
-            model (Model): The model the agent belongs to.
-            lambda1 (float): Weight for consumption in utility.
-            lambda2 (float): Weight for status in utility.
-            alpha (float): Weight for individual status in overall status calculation.
-            beta (float): Effort parameter in convincing others.
-            steps_convincement (int): Number of steps after which agents consider switching groups.
-
-        Returns:
-            None
-        """
-        # Pass the parameters to the parent class.
         super().__init__(unique_id, model)
 
         # Assign the first action, which is a sample drawn from a distribution.
@@ -81,10 +51,11 @@ class coordination_agent(mesa.Agent):
         self.alpha = alpha
         self.beta = beta
 
-        # Create a dictionary for alternative identities
-        groups = ["Pro - environment", "Neutral", "Anti - environment"]
-        other_groups = [g for g in groups if g != self.assigned_group]
-        self.alteregos = {g: {'consumption': [], 'utility': [], 's_i': []} for g in other_groups}
+        # Initialize alterego and alternative utilities
+        self.alterego = self.assigned_group
+        self.alternative_utilities = []
+        self.alter_s_i_history = []
+        self.alter_rankings = {'rpro': [], 'ranti': [], 'rneutral': []}
 
         # Placeholder for status component
         self.s_i = 0
@@ -94,26 +65,12 @@ class coordination_agent(mesa.Agent):
         self.incoming_efforts = []
 
         # Bias
-        self.bias = random.uniform(0.5, 1.5)
+        self.bias = random.uniform(0.5, 1)
 
         # Also create an empty list for utilities
         self.utilities = []
 
     def calculate_status(self, identity, rpro, ranti, rneutral, alpha, share):
-        """
-        Calculates the status of the agent.
-
-        Parameters:
-        - identity (str): The agent's identity group.
-        - rpro (float): Pro-environmental ranking.
-        - ranti (float): Anti-environmental ranking.
-        - rneutral (float): Neutral ranking.
-        - alpha (float): Weight for individual status in overall status calculation.
-        - share (float): Share of agents in the same group.
-
-        Returns:
-        - status (float): The calculated status value.
-        """
         if identity == "Pro - environment":
             theta_pro = 0.5
             theta_anti = 0.25
@@ -131,17 +88,6 @@ class coordination_agent(mesa.Agent):
         return status
 
     def utility(self, identity, consumption, status):
-        """
-        Calculates the utility of the agent based on the outcome or a belief about the game.
-
-        Parameters:
-        - identity (str): The agent's identity group.
-        - consumption (float): The agent's consumption choice.
-        - status (float): The agent's status.
-
-        Returns:
-        - u (float): The calculated utility value.
-        """
         if identity == "Pro - environment":
             x_hat = self.min_believed_consumption
             g_value = g_pro(consumption)
@@ -159,16 +105,6 @@ class coordination_agent(mesa.Agent):
         return u
 
     def consumption_selection(self, identity, status):
-        """
-        Agents choose consumption to maximize their utility.
-
-        Parameters:
-        - identity (str): The agent's identity group.
-        - status (float): The agent's status.
-
-        Returns:
-        - consumption (float): The chosen consumption level.
-        """
         if identity == "Pro - environment":
             x_hat = self.min_believed_consumption
             g_func = g_pro
@@ -188,13 +124,9 @@ class coordination_agent(mesa.Agent):
         return consumption
 
     def step(self):
-        """
-        Executes one step of the coordination game for the current agent.
-        """
         # Reset effort at the beginning of the step
         self.effort = 0
 
-        # Proceed with the rest of the step function
         # Each agent observes another agent's last consumption
         other_agent = self.random.choice(self.model.schedule.agents)
         other_last_consumption = other_agent.history[-1]
@@ -216,24 +148,41 @@ class coordination_agent(mesa.Agent):
             mode_believed = self.history[-1]  # Use own consumption if no observations
         self.mode_believed_consumption = mode_believed * self.bias
 
-        ## If status is included:
         # Include own last consumption
         all_consumptions = self.others_actions + [self.history[-1]]
         consumptions_array = np.array(all_consumptions)
 
-        # Pro-environmental ranking: lower consumption gets higher rank
+        # Calculate rankings before efforts
         rpro_i = 100 - stats.percentileofscore(consumptions_array, self.history[-1])
-
-        # Anti-environmental ranking: higher consumption gets higher rank
         ranti_i = stats.percentileofscore(consumptions_array, self.history[-1])
-
-        # Neutral ranking: proximity to mode consumption
         mode_diff = np.abs(consumptions_array - self.mode_believed_consumption)
         mode_ranks = 1 / (mode_diff + 1e-6)
         self_mode_rank = mode_ranks[-1]
         rneutral_i = stats.percentileofscore(mode_ranks, self_mode_rank)
 
-        # Calculate s_i
+        # Initialize rankings with current values
+        adjusted_rpro_i = rpro_i
+        adjusted_ranti_i = ranti_i
+        adjusted_rneutral_i = rneutral_i
+
+        # Process incoming efforts and adjust rankings
+        for eff in self.incoming_efforts:
+            group_name, effort_amount = eff
+            if group_name == "Pro - environment":
+                adjusted_rpro_i += effort_amount
+            elif group_name == "Anti - environment":
+                adjusted_ranti_i += effort_amount
+            elif group_name == "Neutral":
+                adjusted_rneutral_i += effort_amount
+        # Clear incoming efforts after processing
+        self.incoming_efforts = []
+
+        # Store adjusted rankings for history
+        self.alter_rankings['rpro'].append(adjusted_rpro_i)
+        self.alter_rankings['ranti'].append(adjusted_ranti_i)
+        self.alter_rankings['rneutral'].append(adjusted_rneutral_i)
+
+        # Calculate s_i with adjusted rankings
         if self.assigned_group == "Pro - environment":
             share_own = share_pro
         elif self.assigned_group == "Anti - environment":
@@ -241,8 +190,8 @@ class coordination_agent(mesa.Agent):
         else:
             share_own = share_neutral
 
-        self.s_i = self.calculate_status(self.assigned_group, rpro=rpro_i, ranti=ranti_i,
-                                         rneutral=rneutral_i, alpha=self.alpha, share=share_own)
+        self.s_i = self.calculate_status(self.assigned_group, rpro=adjusted_rpro_i, ranti=adjusted_ranti_i,
+                                         rneutral=adjusted_rneutral_i, alpha=self.alpha, share=share_own)
 
         # Choose consumption
         consumption = self.consumption_selection(self.assigned_group, self.s_i)
@@ -257,121 +206,98 @@ class coordination_agent(mesa.Agent):
             # Alternative share and rank if other_agent joins
             if self.assigned_group == "Pro - environment":
                 alt_share_own = (self.others_identities.count("Pro - environment") + 1) / (steps_taken + 1)
-                r_own = rpro_i
+                r_own = adjusted_rpro_i
             elif self.assigned_group == "Anti - environment":
                 alt_share_own = (self.others_identities.count("Anti - environment") + 1) / (steps_taken + 1)
-                r_own = ranti_i
+                r_own = adjusted_ranti_i
             else:
                 alt_share_own = (self.others_identities.count("Neutral") + 1) / (steps_taken + 1)
-                r_own = rneutral_i
+                r_own = adjusted_rneutral_i
 
-            alt_si = self.calculate_status(self.assigned_group, rpro=rpro_i, ranti=ranti_i,
-                                           rneutral=rneutral_i, alpha=self.alpha, share=alt_share_own)
+            alt_si = self.calculate_status(self.assigned_group, rpro=adjusted_rpro_i, ranti=adjusted_ranti_i,
+                                           rneutral=adjusted_rneutral_i, alpha=self.alpha, share=alt_share_own)
             alt_utility = self.utility(self.assigned_group, consumption, alt_si)
 
             # Imaginary probability of turning others
             p_turning = 1 - math.exp(-self.beta * r_own)
 
-            if alt_utility - initial_utility > (self.beta * r_own) / p_turning:
-                utility = alt_utility - (self.beta * r_own)
-                self.effort = self.beta * r_own
-                # Send effort to other_agent
-                other_agent.incoming_efforts.append((self.assigned_group, self.effort))
-            else:
-                utility = initial_utility
+            if p_turning == 0: 
                 self.effort = 0
+                utility = initial_utility
+            
+            else:
+                if alt_utility - initial_utility > (self.beta * r_own) / p_turning:
+                    utility = alt_utility - (self.beta * r_own)
+                    self.effort = self.beta * r_own
+                    # Send effort to other_agent
+                    other_agent.incoming_efforts.append((self.assigned_group, self.effort))
+                else:
+                    utility = initial_utility
+                    self.effort = 0
         else:
             self.effort = 0
-
-        # For each alter ego, compute s_i, consumption, and utility
-        for alterego in self.alteregos.keys():
-            if alterego == "Pro - environment":
-                share_alterego = share_pro
-            elif alterego == "Anti - environment":
-                share_alterego = share_anti
-            else:
-                share_alterego = share_neutral
-
-            # Calculate alter_s_i
-            alter_s_i = self.calculate_status(alterego, rpro=rpro_i, ranti=ranti_i,
-                                              rneutral=rneutral_i, alpha=self.alpha, share=share_alterego)
-
-            # Compute consumption_alter
-            consumption_alter = self.consumption_selection(alterego, alter_s_i)
-
-            # Compute utility_alter
-            utility_alter = self.utility(alterego, consumption_alter, alter_s_i)
-
-            # Append to self.alteregos[alterego]
-            self.alteregos[alterego]['s_i'].append(alter_s_i)
-            self.alteregos[alterego]['consumption'].append(consumption_alter)
-            self.alteregos[alterego]['utility'].append(utility_alter)
-
-        # Now process incoming efforts and add them to the corresponding alter ego utilities
-        for eff in self.incoming_efforts:
-            group_name, effort_amount = eff
-            if group_name in self.alteregos:
-                # Ensure there's at least one utility entry
-                if self.alteregos[group_name]['utility']:
-                    self.alteregos[group_name]['utility'][-1] += effort_amount
-                else:
-                    # Initialize utility if empty
-                    self.alteregos[group_name]['utility'].append(effort_amount)
-            else:
-                pass  # Handle if group_name is not in alteregos
-        # Clear incoming efforts after processing
-        self.incoming_efforts = []
 
         # Add parameters
         self.utilities.append(utility)
         self.history.append(consumption)
 
+        # Calculate alter_s_i
+        if self.alterego == "Pro - environment":
+            share_alterego = share_pro
+        elif self.alterego == "Anti - environment":
+            share_alterego = share_anti
+        else:
+            share_alterego = share_neutral
+
+        alter_s_i = self.calculate_status(self.alterego, rpro=adjusted_rpro_i, ranti=adjusted_ranti_i,
+                                            rneutral=adjusted_rneutral_i, alpha=self.alpha, share=share_alterego)
+        self.alter_s_i_history.append(alter_s_i)
+
+        # Compute consumption and utility for alterego
+        consumption_alter = self.consumption_selection(self.alterego, alter_s_i)
+        utility_alter = self.utility(self.alterego, consumption_alter, alter_s_i)
+        self.alternative_utilities.append(utility_alter)
+
         # Agents may change their group, depending on the mechanism of conversion
         if steps_taken % self.steps_convincement == 0 and steps_taken >= self.steps_convincement:
+
             # Compute own average utility over the last steps
             own_avg_utility = np.mean(self.utilities[-self.steps_convincement:])
+            # Compute average utility for alterego
+            alterego_avg_utility = np.mean(self.alternative_utilities[-self.steps_convincement:])
 
-            # Compute average utilities for each alter ego
-            alterego_avg_utilities = {}
-            for alterego in self.alteregos.keys():
-                alterego_utilities = self.alteregos[alterego]['utility'][-self.steps_convincement:]
-                alterego_avg_utility = np.mean(alterego_utilities)
-                alterego_avg_utilities[alterego] = alterego_avg_utility
+            # If alterego has higher utility, switch
+            if alterego_avg_utility > own_avg_utility:
+                self.assigned_group = self.alterego
 
-            # Find the alter ego with the highest average utility
-            best_alterego = max(alterego_avg_utilities, key=alterego_avg_utilities.get)
-            best_alterego_avg_utility = alterego_avg_utilities[best_alterego]
+            # Compute average rankings over the last steps_convincement steps
+            avg_rpro = np.mean(self.alter_rankings['rpro'][-self.steps_convincement:])
+            avg_ranti = np.mean(self.alter_rankings['ranti'][-self.steps_convincement:])
+            avg_rneutral = np.mean(self.alter_rankings['rneutral'][-self.steps_convincement:])
 
-            # If best alter ego has higher utility than own, switch
-            if best_alterego_avg_utility > own_avg_utility:
-                self.assigned_group = best_alterego
+            # Determine alterego based on highest average ranking
+            status_scores = {
+                "Pro - environment": avg_rpro,
+                "Anti - environment": avg_ranti,
+                "Neutral": avg_rneutral
+            }
+            # Set alterego to the identity with the highest average ranking
+            self.alterego = max(status_scores, key=status_scores.get)
 
-                # Update self.alteregos to contain the new alter egos
-                groups = ["Pro - environment", "Neutral", "Anti - environment"]
-                other_groups = [g for g in groups if g != self.assigned_group]
-                self.alteregos = {g: {'consumption': [], 'utility': [], 's_i': []} for g in other_groups}
+            # Reset alternative utilities and alter_s_i_history
+            self.alternative_utilities = []
+            self.alter_s_i_history = []
+            self.alter_rankings = {'rpro': [], 'ranti': [], 'rneutral': []}
+        
+
 
 class coordination_model(mesa.Model):
     """
     A model with some number of agents.
     """
 
-    def __init__(self, N, lambda1=1/3, lambda2=1/3, steps_convincement=5,
+    def __init__(self, N, lambda1=1/3, lambda2=1/3, steps_convincement=10,
                  alpha=1, beta=2/3):
-        """
-        Initializes the coordination model.
-
-        Args:
-            N (int): Number of agents in the model.
-            lambda1 (float): Weight for consumption in utility.
-            lambda2 (float): Weight for status in utility.
-            steps_convincement (int): Number of steps after which agents consider switching groups.
-            alpha (float): Weight for individual status in overall status calculation.
-            beta (float): Effort parameter in convincing others.
-
-        Returns:
-            None
-        """
         super().__init__()
         self.num_agents = N
         self.schedule = mesa.time.RandomActivation(self)
@@ -390,10 +316,7 @@ class coordination_model(mesa.Model):
             })
 
     def step(self):
-        """
-        Advance the model by one step.
-        """
         # Collect data
         self.datacollector.collect(self)
-        # The model's step will go here; for now, this will call the step method of each agent
+        # Advance the model by one step
         self.schedule.step()
