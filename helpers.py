@@ -63,10 +63,10 @@ def calculate_mode_hist_midpoint(array, bins=10):
 ### Maximization of utility ------------------------
 
 def g_anti(x):
-    return x
+    return 0
 
 def g_pro(x):
-    return -x
+    return 0
 
 def g_neutral(x):
     return 0
