@@ -59,7 +59,7 @@ class coordination_agent(mesa.Agent):
         self.incoming_efforts = []
 
         # Bias
-        self.bias = self.model.random.uniform(0.5, 1)
+        self.bias = 1 #self.model.random.uniform(0.5, 1)
 
         # Initialize utility history
         self.utilities = []
@@ -135,8 +135,6 @@ class coordination_agent(mesa.Agent):
 
         # Each agent observes another agent's last consumption
         other_agent = self.model.random.choice(self.model.schedule.agents)
-        other_last_consumption = other_agent.history[-1]
-        self.others_actions.append(other_last_consumption)
 
         # Update sample of identities
         self.others_identities.append(other_agent.assigned_group)
@@ -144,19 +142,25 @@ class coordination_agent(mesa.Agent):
         # Store the other agent's ID
         self.other_agent_ids.append(other_agent.unique_id)
 
+        # See the consumption of all acquaintances (including the other agent) - Reset others actions
+        self.others_actions = []
+        for i in self.other_agent_ids:
+            last_action = self.model.schedule.agents[i].history[-1] * self.bias
+            self.others_actions.append(last_action)
+
         steps_taken = len(self.others_identities)
         share_pro = self.others_identities.count("Pro - environment") / steps_taken
         share_neutral = self.others_identities.count("Neutral") / steps_taken
         share_anti = self.others_identities.count("Anti - environment") / steps_taken
 
         # Update beliefs based on observed actions
-        self.min_believed_consumption = min(self.others_actions) * self.bias
-        self.max_believed_consumption = max(self.others_actions) * self.bias
+        self.min_believed_consumption = min(self.others_actions) 
+        self.max_believed_consumption = max(self.others_actions)
         mode_believed = calculate_mode_hist_midpoint(self.others_actions, bins=10)
         if mode_believed is None:
             mode_believed = self.history[-1]
-        self.mode_believed_consumption = mode_believed * self.bias
-
+        self.mode_believed_consumption = mode_believed 
+        
         # Include own last consumption
         all_consumptions = self.others_actions + [self.history[-1]]
         consumptions_array = np.array(all_consumptions)
