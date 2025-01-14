@@ -402,7 +402,7 @@ class coordination_model(mesa.Model):
 
 ### Other definition of status-seeking behavior: Replication
 
-# Example distribution for initial consumption (as in your original code)
+# Example distribution for initial consumption (as in the original code)
 consumption_dist = get_distribution(dist_type="uniform", lower=5, upper=100)
 
 class status_seeking_agent(mesa.Agent):
@@ -413,7 +413,7 @@ class status_seeking_agent(mesa.Agent):
 
     def __init__(self, unique_id, model,
                  lambda1=1/3, lambda2=1/3, alpha=1, beta=2/3,
-                 steps_convincement=10):
+                 steps_convincement=10, status_type = "nontie"):
         super().__init__(unique_id, model)
 
         # Assign initial group randomly
@@ -434,6 +434,7 @@ class status_seeking_agent(mesa.Agent):
         self.steps_convincement = steps_convincement
         self.alpha = alpha
         self.beta = beta
+        self.status_type = status_type
 
         # Alter ego and related tracking
         self.alterego = self.assigned_group
@@ -603,7 +604,21 @@ class status_seeking_agent(mesa.Agent):
         highest_status_agent_id = other_agents[highest_status_idx]
 
         # Return that agent's consumption
-        return self.model.schedule.agents[highest_status_agent_id].history[-1]
+        hightest_status_consumption = self.model.schedule.agents[highest_status_agent_id].history[-1]
+
+        # Choose my consumption
+        if self.assigned_group == "Pro - environment":
+            consumption = hightest_status_consumption - 1
+        elif self.assigned_group == "Anti - environment":
+            consumption = hightest_status_consumption + 1
+        else:  # Neutral
+            consumption = hightest_status_consumption
+
+        ## Tie
+        if self.status_type == "tie":
+            consumption = hightest_status_consumption
+        
+        return consumption 
 
     def step(self):
         """
@@ -816,7 +831,7 @@ class status_seeking_model(mesa.Model):
     """
 
     def __init__(self, N, lambda1=1/3, lambda2=1/3, steps_convincement=10,
-                 alpha=1, beta=2/3):
+                 alpha=1, beta=2/3, status_type = "nontie"):
         super().__init__()
         self.num_agents = N
         self.schedule = mesa.time.RandomActivation(self)
@@ -828,7 +843,8 @@ class status_seeking_model(mesa.Model):
                 lambda2=lambda2,
                 steps_convincement=steps_convincement,
                 alpha=alpha,
-                beta=beta
+                beta=beta, 
+                status_type=status_type
             )
             self.schedule.add(a)
 
