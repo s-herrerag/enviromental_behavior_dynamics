@@ -37,29 +37,6 @@ def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
     else:
         raise ValueError(f"Unsupported distribution type: {dist_type}")
 
-
-
-### Estimation of the mode ------------------------
-def calculate_mode_hist_midpoint(array, bins=10):
-    """
-    Calculate the mode of an array by finding the midpoint of the histogram bin with the highest frequency.
-
-    Parameters:
-    - array (list or numpy array): The input data.
-    - bins (int): Number of bins to use for the histogram.
-
-    Returns:
-    - mode (float): The estimated mode as the midpoint of the most frequent bin.
-    """
-    if len(array) == 0 or not array:
-        return None  # Handle empty array by returning None
-
-    counts, bin_edges = np.histogram(array, bins=bins)
-    max_bin_index = np.argmax(counts)
-    mode = (bin_edges[max_bin_index] + bin_edges[max_bin_index + 1]) / 2
-    return mode
-
-
 ### Maximization of utility ------------------------
 
 def g_anti(x):
