@@ -7,7 +7,12 @@ from scipy.stats import truncnorm, uniform, norm  # Import other distributions a
 from scipy.optimize import minimize_scalar
 
 
+#### Transform rankings to percentages ------------------------
 
+def transform_percentage(max_x,x):
+    if max_x == 1:
+        return 0
+    return 100 * (max_x-x) / (max_x-1)
 
 ### Distribution of initial consumption ------------------------
 
@@ -36,47 +41,3 @@ def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
     # Add more distributions as needed
     else:
         raise ValueError(f"Unsupported distribution type: {dist_type}")
-
-### Maximization of utility ------------------------
-
-def g_anti(x):
-    return 0
-
-def g_pro(x):
-    return 0
-
-def g_neutral(x):
-    return 0
-
-def maximize_utility(x_hat, g, lambda1, lambda2, s_i):
-    # Define the original function u(x) using the passed g(x)
-    """
-    Find the value of x that maximizes the utility function u(x) = lambda1 * x + lambda2 * s_i + (1 - lambda1 - lambda2) * misalignment_cost,
-    where misalignment_cost = -(x - x_hat)**2 + g(x).
-
-    Parameters:
-    - x_hat (float): The believed estimate of the distribution
-    - g (callable): The function g(x) that is used in the misalignment cost
-    - lambda1 (float): The weight of the linear term in the utility
-    - lambda2 (float): The weight of the social influence term in the utility
-    - s_i (float): The status
-
-    Returns:
-    - x_max (float): The value of x that maximizes the utility
-
-    Raises:
-    - ValueError: If the optimization fails
-    """
-    def u(x):
-        misalignment_cost = - (x - x_hat)**2 + g(x)
-        return lambda1 * x + lambda2 * s_i + (1 - lambda1 - lambda2) * misalignment_cost
-    def neg_u(x):
-        return -u(x)
-    result = minimize_scalar(neg_u, bounds=(0, 20000), method='bounded')
-    if result.success:
-        x_max = result.x
-        return x_max
-    else:
-        raise ValueError("Optimization failed: " + result.message)
-
-
