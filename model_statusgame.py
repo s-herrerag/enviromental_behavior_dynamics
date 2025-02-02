@@ -65,6 +65,8 @@ class statusgame_model(mesa.Model):
         # 1) Control agents -------------
         # Simultaneously activate agents 
         self.agents.do("calculate_status_classical")
+        self.agents.do("calculate_status_alternative")
+        self.agents.do("choose_consumption_alternative")
         self.agents.do("choose_consumption_classical")
         self.agents.do("update_group")
 
