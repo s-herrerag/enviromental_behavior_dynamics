@@ -28,7 +28,7 @@ class statusgame_agent(mesa.Agent):
         self.status_strategy = status_strategy
 
         # Assign initial group randomly
-        self.assigned_group = self.model.random.choice(["Pro - environment", "Neutral", "Anti - environment"])
+        self.assigned_group = self.model.random.choices(["Pro - environment", "Neutral", "Anti - environment"], weights=[1/3, 1/3, 1/3])[0]
         # Assign initial consumption and status
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
@@ -204,8 +204,9 @@ class statusgame_agent(mesa.Agent):
         else:
             self.consumption = self.consumption_neutral
         
-        # Store as attribute the highest index
+        # Store as attribute the highest utility
         self.highest_utility = highest_utility
+        self.utility = utilities[highest_utility]
 
     def update_group(self):
         # Update group
@@ -379,6 +380,9 @@ class statusgame_agent(mesa.Agent):
         
         # Store as attribute the highest index
         self.highest_utility = highest_utility
+        self.utility = utilities[highest_utility]
+
+
 
         
         

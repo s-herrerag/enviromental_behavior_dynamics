@@ -14,10 +14,11 @@ class statusgame_model(mesa.Model):
     """
     Create N agents and manipulate a graph where they will interact
     """
-    def __init__(self, N, seed=None, lambda_s = 1, status_strategy = "nontie", memory = 10):
+    def __init__(self, N, seed=None, lambda_s = 1, status_strategy = "nontie", memory = 10, type_game = "classical"):
         super().__init__(seed=seed)
         self.num_agents = N
         self.memory = memory #Param for deleting edges
+        self.type_game = type_game
 
         # Create an empty Graph in which agents will be nodes
         self.G = nx.Graph()
@@ -46,17 +47,16 @@ class statusgame_model(mesa.Model):
         self.G.add_edges_from(pairs)
 
         # Create datacollector and collect initial data
-        self.datacollector = DataCollector(model_reporters={"network": lambda m: m.G}, 
-                                           agent_reporters={"status": "status", "consumption": "consumption", "group": "assigned_group", "total_neighbors": "total_neighbors", 
-                                                            "identities_neighbors": "identities_neighbors", "array_consumptions": "array_consumptions",
+        self.datacollector = DataCollector(#model_reporters={"network": lambda m: m.G}, 
+                                           agent_reporters={"group": "assigned_group", "status": "status", "consumption": "consumption", "utility": "utility",
                                                             "belief_min": "belief_min", "belief_median": "belief_median", "belief_max": "belief_max",
-                                                            "rankings_pro": "rankings_pro", "rankings_anti": "rankings_anti", "rankings_neutral": "rankings_neutral",
-                                                            "rpro_i": "rpro_i", "ranti_i": "ranti_i", "rneutral_i": "rneutral_i",
-                                                            "wpro_i": "wpro_i", "wanti_i": "wanti_i", "wneutral_i": "wneutral_i",
                                                             "u_pro": "u_pro", "u_anti": "u_anti", "u_neutral": "u_neutral", 
                                                             "status_pro" : "status_pro", "status_anti" : "status_anti", "status_neutral" : "status_neutral"})
         
         self.datacollector.collect(self)
+
+        # Batch
+        self.running = True
 
         
 
@@ -64,10 +64,14 @@ class statusgame_model(mesa.Model):
 
         # 1) Control agents -------------
         # Simultaneously activate agents 
-        self.agents.do("calculate_status_classical")
-        self.agents.do("calculate_status_alternative")
-        self.agents.do("choose_consumption_alternative")
-        self.agents.do("choose_consumption_classical")
+        if self.type_game == "classical":
+            self.agents.do("calculate_status_classical")
+            self.agents.do("choose_consumption_classical")
+        else: 
+            self.agents.do("calculate_beliefs")
+            self.agents.do("calculate_status_alternative")
+            self.agents.do("choose_consumption_alternative")
+            
         self.agents.do("update_group")
 
         # 2) Control netweork ------------
