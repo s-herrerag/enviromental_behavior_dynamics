@@ -33,9 +33,6 @@ class statusgame_agent(mesa.Agent):
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
 
-        # Store in node the information
-        self.model.G.add_node(self.unique_id)
-
     def calculate_beliefs(self):
         neighbors_list = [n for n in self.model.G.neighbors(self.unique_id)]
         neighbors_consumption = [self.model.agents_dict[node].consumption for node in neighbors_list]
