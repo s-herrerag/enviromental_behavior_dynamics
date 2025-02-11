@@ -1,41 +1,20 @@
 #########################
 # Helpers for the ABMs
 #########################
-
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
-from scipy.stats import truncnorm, uniform, norm  # Import other distributions as needed
+from scipy.stats import truncnorm, uniform, norm
 from scipy.optimize import minimize_scalar
 
-
-
-#### Transform rankings to percentages ------------------------
-
-def transform_percentage(max_x,x):
+def transform_percentage(max_x, x):
     if max_x == 1:
         return 0
-    return 100 * (max_x-x) / (max_x-1)
-
-### Distribution of initial consumption ------------------------
+    return 100 * (max_x - x) / (max_x - 1)
 
 def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
-    """
-    Factory function to create different distribution objects.
-
-    Parameters:
-    - dist_type (str): Type of distribution ('truncnorm', 'uniform', 'normal', etc.)
-    - mu (float): Mean of the distribution (used for normal and truncnorm)
-    - sigma (float): Standard deviation (used for normal and truncnorm)
-    - lower (float): Lower bound (used for truncnorm and uniform)
-    - upper (float): Upper bound (used for truncnorm and uniform)
-    - **kwargs: Additional keyword arguments for specific distributions
-
-    Returns:
-    - A scipy.stats distribution object
-    """
     if dist_type == 'truncnorm':
         a, b = (lower - mu) / sigma, (upper - mu) / sigma
         return truncnorm(a, b, loc=mu, scale=sigma)
@@ -43,30 +22,14 @@ def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
         return uniform(loc=lower, scale=upper - lower)
     elif dist_type == 'normal':
         return norm(loc=mu, scale=sigma)
-    # Add more distributions as needed
     else:
         raise ValueError(f"Unsupported distribution type: {dist_type}")
-    
-### Plot and save main results ------------------------
 
 def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_plots=True):
-    """
-    Plots and saves several graphs for the given agent data.
-
-    Parameters:
-        agent_data (DataFrame): DataFrame containing columns such as 'Step', 'Utility', 'Consumption', 'AgentID', and 'Group'.
-        color_dict (dict): Dictionary mapping group names to colors.
-        N (int): Total number of agents (used for normalizing counts to percentages).
-        output_folder (str): Directory where the plots will be saved.
-        show_plots (bool): If True, calls plt.show() to display the plots.
-    """
-    
-    # Create output folder if it doesn't exist
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
-    # -------------------------------
-    # Plot 1: All agents' utilities over time
+    # Plot 1: Individual utilities
     plt.figure(figsize=(7, 5))
     sns.lineplot(
         data=agent_data,
@@ -90,8 +53,7 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
         plt.show()
     plt.close()
     
-    # -------------------------------
-    # Plot 2: All agents' consumptions over time
+    # Plot 2: Individual consumptions
     plt.figure(figsize=(7, 5))
     sns.lineplot(
         data=agent_data,
@@ -115,12 +77,10 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
         plt.show()
     plt.close()
     
-    # -------------------------------
-    # Plot 3: Average utilities over time
+    # Plot 3: Average utilities
     plt.figure(figsize=(7, 5))
     sns.lineplot(
         data=agent_data,
-        units=None,
         x='Step',
         y='utility',
         hue='group',
@@ -140,12 +100,10 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
         plt.show()
     plt.close()
     
-    # -------------------------------
-    # Plot 4: Average consumptions over time
+    # Plot 4: Average consumptions
     plt.figure(figsize=(7, 5))
     sns.lineplot(
         data=agent_data,
-        units=None,
         x='Step',
         y='consumption',
         hue='group',
@@ -165,20 +123,12 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
         plt.show()
     plt.close()
     
-    # -------------------------------
-    # Plot 5: Group shares over time
-
-    # N
+    # Plot 5: Group shares
     N = agent_data['AgentID'].nunique()
-
-    # Count the number of individuals in each group at each Step
     group_shares = agent_data.groupby(['Step', 'group'])['AgentID'].count().reset_index()
-    # Normalize the counts within each Step to get shares (percentage)
-    group_shares['Share'] = group_shares['AgentID'].apply(lambda x: x * 100 / N)
-    # Pivot the data to ensure every Step has an entry for each group (fill missing with 0)
+    group_shares['Share'] = group_shares['AgentID'] * 100 / N
     pivoted_shares = group_shares.pivot(index='Step', columns='group', values='Share').fillna(0)
     
-    # Extract the series for each group. If a group is missing, default to zeros.
     steps_stack = pivoted_shares.index.tolist()
     anti_stack = pivoted_shares.get('Anti - environment', pd.Series(0, index=pivoted_shares.index)).tolist()
     neutral_stack = pivoted_shares.get('Neutral', pd.Series(0, index=pivoted_shares.index)).tolist()
@@ -206,4 +156,3 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
     if show_plots:
         plt.show()
     plt.close()
-
