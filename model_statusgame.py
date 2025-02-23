@@ -71,13 +71,15 @@ class statusgame_model(mesa.Model):
         largest_cc = max(nx.connected_components(self.G), key=len)
         G_largest = self.G.subgraph(largest_cc)
         self.max_path_length = nx.diameter(G_largest)
+        self.cluster_coefficient = nx.average_clustering(self.G)
 
 
         # Create datacollector and collect initial data
         self.datacollector = DataCollector(
             model_reporters={"dense_degree": "dense_degree",
                              "connected_components": "connected_components",
-                             "max_path_length": "max_path_length"},
+                             "max_path_length": "max_path_length", 
+                             "cluster_coefficient": "cluster_coefficient"},
             agent_reporters={
                 "group": "assigned_group",
                 "avg_common": "n_common",
@@ -209,6 +211,7 @@ class statusgame_model(mesa.Model):
         largest_cc = max(nx.connected_components(self.G), key=len)
         G_largest = self.G.subgraph(largest_cc)
         self.max_path_length = nx.diameter(G_largest)
+        self.cluster_coefficient = nx.average_clustering(self.G)
 
         # 3) Collect data.
         self.datacollector.collect(self)

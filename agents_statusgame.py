@@ -93,15 +93,15 @@ class statusgame_agent(mesa.Agent):
     def calculate_field_of_action(self):
         if self.assigned_group == "Pro - environment":
             l = np.abs(self.consumption - self.belief_min)
-            field = l / self.gamma + 1
+            field = self.gamma / (l + 1)
 
         elif self.assigned_group == "Anti - environment":
             l = np.abs(self.consumption - self.belief_max)
-            field = l / self.gamma + 1
+            field = self.gamma / (l + 1)
 
         elif self.assigned_group == "Neutral":
             l = np.abs(self.consumption - self.belief_median)
-            field = l / self.gamma + 1
+            field = self.gamma / (l + 1)
 
         self.field_of_action = field
 
