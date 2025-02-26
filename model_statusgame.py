@@ -12,11 +12,15 @@ class statusgame_model(mesa.Model):
     Create N agents and manipulate a graph where they will interact.
     """
     def __init__(self, N, seed=None, lambda_s=1,
-                 memory=10, create_network="erdos_renyi", p=1/10, gamma = 2, k = 5, rho = 1/3):
+                 memory=10, create_network="erdos_renyi", p=1/10, gamma = 2, k = 5, rho = 1/3, 
+                 seed_consumption = False):
         super().__init__(seed=seed)
         self.num_agents = N
         self.memory = memory  # Parameter for deleting edges
         self.rho = rho
+
+        if seed_consumption:
+            np.random.seed(seed)
 
         # Create agents
         statusgame_agent.create_agents(model=self, n=N, lambda_s=lambda_s, gamma=gamma)

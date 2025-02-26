@@ -4,7 +4,7 @@
 import mesa
 import numpy as np
 from scipy import stats
-import networkx as nx
+import networkx as nx 
 from helpers import get_distribution, transform_percentage
 
 # Distribution for initial consumption
