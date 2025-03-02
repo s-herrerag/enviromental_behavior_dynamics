@@ -46,13 +46,13 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
             color = color_dict[group_name]
             ax.plot(seg_df['Step'], seg_df['utility'],
                     color=color,
-                    marker='o',  # points in same color
+                    marker= None,  # points in same color
                     linewidth=0.6,
                     alpha=0.4)
 
     # Create a custom legend for the group colors:
     unique_groups = agent_data['group'].unique()
-    handles = [plt.Line2D([0], [0], color=color_dict[g], marker='o', label=g, linewidth=2)
+    handles = [plt.Line2D([0], [0], color=color_dict[g], label=g,  marker=None, linewidth=0.7, alpha = 0.5)
             for g in unique_groups]
     ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
 
@@ -60,29 +60,43 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
     plt.xlabel("Time Step")
     plt.ylabel("Utility (All agents)")
     plt.tight_layout()
-    plt.savefig("individual_utilities.pdf", bbox_inches='tight', dpi=300)
-    plt.show()
+    plt.savefig(os.path.join(output_folder, "individual_utilities.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
     plt.close()
 
     
     # Plot 2: Individual consumptions
+
     plt.figure(figsize=(7, 5))
-    sns.lineplot(
-        data=agent_data,
-        units="AgentID",
-        x='Step',
-        y='consumption',
-        hue='group',
-        legend='full',
-        linewidth=0.6,
-        alpha=0.4,
-        estimator=None,
-        palette=color_dict
-    )
+    ax = plt.gca()
+
+    for agent_id, df_agent in agent_data.groupby("AgentID"):
+        # Sort in time order
+        df_agent = df_agent.sort_values("Step")
+        
+        # Identify segments where the group changes from one row to the next
+        segment_ids = (df_agent['group'].shift() != df_agent['group']).cumsum()
+        
+        # Now plot each segment with the group's color
+        for _, seg_df in df_agent.groupby(segment_ids):
+            group_name = seg_df['group'].iloc[0]
+            color = color_dict[group_name]
+            ax.plot(seg_df['Step'], seg_df['consumption'],
+                    color=color,
+                    marker=None,  # points in same color
+                    linewidth=0.6,
+                    alpha=0.4)
+
+    # Create a custom legend for the group colors:
+    unique_groups = agent_data['group'].unique()
+    handles = [plt.Line2D([0], [0], color=color_dict[g], label=g,  marker=None, linewidth=0.7, alpha = 0.5)
+            for g in unique_groups]
+    ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
+
     plt.title("All Agents' Consumptions Over Time")
     plt.xlabel("Time Step")
     plt.ylabel("Consumption (All agents)")
-    plt.legend(title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig(os.path.join(output_folder, "individual_consumptions.pdf"), bbox_inches='tight', dpi=300)
     if show_plots:

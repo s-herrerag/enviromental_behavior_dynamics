@@ -13,11 +13,12 @@ class statusgame_model(mesa.Model):
     """
     def __init__(self, N, seed=None, lambda_s=1,
                  memory=10, create_network="erdos_renyi", p=1/10, gamma = 2, k = 5, rho = 1/3, 
-                 seed_consumption = False):
+                 seed_consumption = False, alpha = 1/2):
         super().__init__(seed=seed)
         self.num_agents = N
         self.memory = memory  # Parameter for deleting edges
         self.rho = rho
+        self.alpha = alpha
 
         if seed_consumption:
             np.random.seed(seed)
@@ -163,18 +164,44 @@ class statusgame_model(mesa.Model):
                 # No candidate available for this agent.
                 continue
 
-            # Randomly choose a partner from the candidate pool.
-            partner_id = self.random.choice(candidate_pool)
-            # Verify that there is no existing edge. Try up to max_attempts.
+
+            distances = nx.single_source_shortest_path_length(self.G, source=agent_id, cutoff=3)
+
+            filtered_candidates = []
+            for c_id in candidate_pool:
+                dist = distances.get(c_id, 999999)  
+                if dist == 2: #and dist <= 3:
+                    filtered_candidates.append(c_id)
+
+            # If none remain after filtering, skip
+            if not filtered_candidates:
+                continue
+
+            # Compute weights = 1/(1+dist) for each candidate
+            weights = []
+            for partner_id in filtered_candidates:
+                d = distances[partner_id]  # guaranteed in dictionary
+                w = np.exp(-self.alpha * d)
+                weights.append(w)
+
+            # Normalize
+            weight_sum = sum(weights)
+            if weight_sum <= 0:
+                # fallback if something odd happened
+                partner_id = self.random.choice(filtered_candidates)
+            else:
+                probs = [w / weight_sum for w in weights]
+                partner_id = np.random.choice(filtered_candidates, p=probs)
+
+            # Try to avoid creating an existing edge or self-loop
             max_attempts = 10
             attempts = 0
-            while ((agent_id, partner_id) in self.edge_set or 
-                   (partner_id, agent_id) in self.edge_set or 
-                   agent_id == partner_id) and attempts < max_attempts:
-                partner_id = self.random.choice(candidate_pool)
+            while ( (agent_id, partner_id) in self.edge_set or
+                    (partner_id, agent_id) in self.edge_set or
+                    agent_id == partner_id ) and attempts < max_attempts:
+                partner_id = self.random.choice(filtered_candidates)
                 attempts += 1
             if attempts == max_attempts:
-                # Could not find a valid partner, skip pairing for this agent.
                 continue
 
             # Record the new pair.

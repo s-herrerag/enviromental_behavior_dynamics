@@ -14,14 +14,14 @@ class statusgame_agent(mesa.Agent):
     """
     Agent with only status and identity.
     """
-    def __init__(self, model, lambda_s=1, gamma=2):
+    def __init__(self, model, lambda_s=1, gamma=1):
         super().__init__(model)
         self.lambda_s = lambda_s
         self.gamma = gamma
         # Randomly assign initial group
         self.assigned_group = self.model.random.choices(
             ["Pro - environment", "Neutral", "Anti - environment"],
-            weights=[1/3, 1/3, 1/3]
+            weights=[1/3, 1/3,1/3]
         )[0]
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
@@ -69,7 +69,7 @@ class statusgame_agent(mesa.Agent):
                 rankings = stats.rankdata([-val for val in common_consumptions], method="average")
             elif j_agent.assigned_group == "Neutral":
                 if len(common_consumptions) < 3:
-                    rankings = [1] * len(common_consumptions)
+                   rankings = [1] * len(common_consumptions)
                 else:
                     median_value = np.median(common_consumptions)
                     differences = np.abs(np.array(common_consumptions) - median_value)
@@ -91,24 +91,20 @@ class statusgame_agent(mesa.Agent):
             return avg_status
         
     def calculate_field_of_action(self):
-        if self.assigned_group == "Pro - environment":
-            l = np.abs(self.consumption - self.belief_min)
-            field = self.gamma * l
+        l_pro = np.abs(self.consumption - self.belief_min) 
+        
+        l_anti = np.abs(self.consumption - self.belief_max) 
+        
+        l_neutral = np.abs(self.consumption - self.belief_median)
 
-        elif self.assigned_group == "Anti - environment":
-            l = np.abs(self.consumption - self.belief_max)
-            field = self.gamma * l 
-
-        elif self.assigned_group == "Neutral":
-            l = np.abs(self.consumption - self.belief_median)
-            field = self.gamma * l 
+        field = max(l_pro, l_anti, l_neutral) * self.gamma #Calculate field againts the farthest reference
 
         self.field_of_action = field
 
     def choose_consumption_alternative(self):
         # Define the ideal action for each agent, which depends on the field of action
-        self.consumption_pro = self.consumption - self.field_of_action
-        self.consumption_anti = self.consumption + self.field_of_action
+        self.consumption_pro = self.consumption - self.field_of_action - 1 
+        self.consumption_anti = self.consumption + self.field_of_action + 1
         
         # Calculate the difference between the median and the current consumption
         diff = self.belief_median - self.consumption
@@ -141,7 +137,7 @@ class statusgame_agent(mesa.Agent):
         self.u_anti = self.lambda_s * status_anti - (1 - self.lambda_s) * np.abs(self.consumption_anti - ideal)
         self.u_neutral = self.lambda_s * status_neutral - (1 - self.lambda_s) * np.abs(self.consumption_neutral - ideal)
 
-        utilities = [self.u_pro, self.u_anti, self.u_neutral]
+        utilities = [self.u_pro, self.u_anti, self.u_neutral] 
         highest_utilities = np.max(utilities)
         best_options = np.where(np.array(utilities) == highest_utilities)[0]
 
