@@ -91,31 +91,35 @@ class statusgame_agent(mesa.Agent):
             return avg_status
         
     def calculate_field_of_action(self):
+        # Distances
         l_pro = np.abs(self.consumption - self.belief_min) 
-        
         l_anti = np.abs(self.consumption - self.belief_max) 
-        
         l_neutral = np.abs(self.consumption - self.belief_median)
+        
+        # Fields
+        field_pro = self.gamma * l_pro
+        field_anti = self.gamma * l_anti
+        field_neutral = self.gamma * l_neutral
 
-        field = max(l_pro, l_anti, l_neutral) * self.gamma #Calculate field againts the farthest reference
-
-        self.field_of_action = field
+        self.field_of_action = {"Pro - environment":field_pro, 
+                                "Anti - environment":field_anti, 
+                                "Neutral":field_neutral}
 
     def choose_consumption_alternative(self):
         # Define the ideal action for each agent, which depends on the field of action
-        self.consumption_pro = self.consumption - self.field_of_action - 1 
-        self.consumption_anti = self.consumption + self.field_of_action + 1
+        self.consumption_pro = self.consumption - self.field_of_action["Pro - environment"] - 1 
+        self.consumption_anti = self.consumption + self.field_of_action["Anti - environment"] + 1
         
         # Calculate the difference between the median and the current consumption
         diff = self.belief_median - self.consumption
         # If the difference is within the allowed field, move exactly to the median.
         # Otherwise, move by the maximum allowed amount in the appropriate direction.
-        if np.abs(diff) <= self.field_of_action:
+        if np.abs(diff) <= self.field_of_action["Neutral"]:
             self.consumption_neutral = self.belief_median
         else:
             # Determine the direction: +1 if we need to increase, -1 if decrease.
             step_direction = 1 if diff > 0 else -1
-            self.consumption_neutral = self.consumption + step_direction * self.field_of_action
+            self.consumption_neutral = self.consumption + step_direction * self.field_of_action["Neutral"]
 
         # Calculate the status for each alternative
         status_pro = self.calculate_status_alternative(consumption=self.consumption_pro, update=False)

@@ -42,79 +42,111 @@ class OneActiveStatusGameModel(statusgame_model):
                 agent.choose_consumption_alternative()
                 agent.update_group()
                 
-        # 2) Network update (identical to the original model)
+        # 2) Update network: Create new pairs with homophily.
+        # Get the current unique_ids array (for reference)
         all_ids = np.array([agent.unique_id for agent in self.agents_list])
-        self.random.shuffle(all_ids)  # shuffle for randomness
 
         # Build available sets per group from the current agents.
-        # (We use the agent selection based on assigned_group as in the original model.)
-        pro_ids    = set(a.unique_id for a in self.agents if a.assigned_group == "Pro - environment")
-        anti_ids   = set(a.unique_id for a in self.agents if a.assigned_group == "Anti - environment")
-        neutral_ids= set(a.unique_id for a in self.agents if a.assigned_group == "Neutral")
-        available_all = set(all_ids)
+        pro_ids    = set(a.unique_id for a in self.agents.select(lambda a: a.assigned_group == "Pro - environment"))
+        anti_ids   = set(a.unique_id for a in self.agents.select(lambda a: a.assigned_group == "Anti - environment"))
+        neutral_ids= set(a.unique_id for a in self.agents.select(lambda a: a.assigned_group == "Neutral"))
+        available_all = set(all_ids)  # all available agents for pairing
 
         new_pairs = []
+        # Build a list of all currently available agents.
         available_list = list(available_all)
-        self.random.shuffle(available_list)  # randomize order of pairing attempts
+        self.random.shuffle(available_list)
 
         while len(available_list) >= 2:
             agent_id = available_list.pop(0)
+            # Skip if agent_id was removed already (already paired).
             if agent_id not in available_all:
                 continue
-            agent_group = self.agents_dict[agent_id].assigned_group
-            # Determine available partners by group.
-            if agent_group == "Pro - environment":
-                same_group_avail = pro_ids - {agent_id}
-                diff_group_avail = (anti_ids | neutral_ids) & available_all
-            elif agent_group == "Anti - environment":
-                same_group_avail = anti_ids - {agent_id}
-                diff_group_avail = (pro_ids | neutral_ids) & available_all
-            else:  # "Neutral"
-                same_group_avail = neutral_ids - {agent_id}
-                diff_group_avail = (pro_ids | anti_ids) & available_all
 
-            # Decide whether to pick from the same group (homophily) or a different group.
-            if self.random.random() < self.rho and same_group_avail:
-                candidate_pool = list(same_group_avail & available_all)
-            elif diff_group_avail:
-                candidate_pool = list(diff_group_avail)
-            elif same_group_avail:
-                candidate_pool = list(same_group_avail & available_all)
+            # Decide which mechanism to use:
+            if self.random.random() < self.alpha:
+                #
+                #  (A) Match with friend-of-friend
+                #
+                # Get the agent's direct neighbors (already computed in neighbor_sets).
+                friends = self.neighbor_sets[agent_id]
+                # Build the set of friends-of-friends.
+                friend_of_friends = set()
+                for f_id in friends:
+                    friend_of_friends.update(self.neighbor_sets[f_id])
+                # Remove direct friends and the agent itself from that set.
+                friend_of_friends.discard(agent_id)
+                friend_of_friends -= friends
+                # Restrict to currently unpaired agents.
+                candidate_pool = list(friend_of_friends & available_all)
+
             else:
+                #
+                #  (B) Match randomly, inside the group with prob rho or outside with prob (1-rho)
+                #
+                agent_group = self.agents_dict[agent_id].assigned_group
+                if agent_group == "Pro - environment":
+                    same_group_avail = pro_ids - {agent_id}
+                    diff_group_avail = (anti_ids | neutral_ids) & available_all
+                elif agent_group == "Anti - environment":
+                    same_group_avail = anti_ids - {agent_id}
+                    diff_group_avail = (pro_ids | neutral_ids) & available_all
+                else:  # "Neutral"
+                    same_group_avail = neutral_ids - {agent_id}
+                    diff_group_avail = (pro_ids | anti_ids) & available_all
+
+                # Decide whether to pick from the same or a different group.
+                if self.random.random() < self.rho and same_group_avail:
+                    candidate_pool = list(same_group_avail & available_all)
+                elif diff_group_avail:
+                    candidate_pool = list(diff_group_avail)
+                elif same_group_avail:
+                    candidate_pool = list(same_group_avail & available_all)
+                else:
+                    candidate_pool = []
+
+            if not candidate_pool:
+                # No valid partner found for this agent — skip.
                 continue
 
-            partner_id = self.random.choice(candidate_pool)
-            # Verify that there is no existing edge; try a few times if needed.
+            # Pick the partner, making sure we don't duplicate edges.
             max_attempts = 10
             attempts = 0
-            while ((agent_id, partner_id) in self.edge_set or 
-                   (partner_id, agent_id) in self.edge_set or 
-                   agent_id == partner_id) and attempts < max_attempts:
-                partner_id = self.random.choice(candidate_pool)
+            partner_id = None
+
+            while attempts < max_attempts:
+                candidate = self.random.choice(candidate_pool)
                 attempts += 1
-            if attempts == max_attempts:
+                # Verify there's no existing edge to candidate.
+                if (agent_id, candidate) not in self.edge_set and (candidate, agent_id) not in self.edge_set:
+                    partner_id = candidate
+                    break
+
+            # If no valid partner was found, skip this agent.
+            if partner_id is None:
                 continue
 
-            # Record the new pair.
+            # Record the pair and update the sets.
             new_pairs.append((agent_id, partner_id))
             self.edge_set.add((agent_id, partner_id))
-            # Remove both agents from available pools.
+
+            # Remove paired agents from the available pools.
             available_all.discard(agent_id)
             available_all.discard(partner_id)
             if agent_id in available_list:
                 available_list.remove(agent_id)
             if partner_id in available_list:
                 available_list.remove(partner_id)
-            pro_ids.discard(agent_id); anti_ids.discard(agent_id); neutral_ids.discard(agent_id)
-            pro_ids.discard(partner_id); anti_ids.discard(partner_id); neutral_ids.discard(partner_id)
+            pro_ids.discard(agent_id);  anti_ids.discard(agent_id);  neutral_ids.discard(agent_id)
+            pro_ids.discard(partner_id);  anti_ids.discard(partner_id);  neutral_ids.discard(partner_id)
 
-        # Add the new pairs to the graph and record them.
+        # Finally, add the new pairs to the network and record them.
         self.G.add_edges_from(new_pairs)
         if self.steps not in self.history_pairs:
             self.history_pairs[self.steps] = []
         self.history_pairs[self.steps].extend(new_pairs)
 
-        # Remove old edges if the memory limit is reached.
+        # Remove old edges if the memory limit is reached (unchanged from your previous code).
         if self.steps >= self.memory:
             old_key = self.steps - self.memory
             if old_key in self.history_pairs:
@@ -125,6 +157,8 @@ class OneActiveStatusGameModel(statusgame_model):
                         self.edge_set.remove(pair)
                     elif (pair[1], pair[0]) in self.edge_set:
                         self.edge_set.remove((pair[1], pair[0]))
+
+    # 3) Collect data.
 
         # Update network metrics.
         self.dense_degree = sum(dict(self.G.degree()).values()) / self.num_agents
