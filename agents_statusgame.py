@@ -14,14 +14,21 @@ class statusgame_agent(mesa.Agent):
     """
     Agent with only status and identity.
     """
-    def __init__(self, model, lambda_s=1, gamma=1):
+    def __init__(self, model, lambda_s=1, gamma=1, wait_gamma=False,
+                 shock = 0, period_shock = 0, 
+                 weights = [1/3, 1/3, 1/3]):
+        
         super().__init__(model)
         self.lambda_s = lambda_s
-        self.gamma = gamma
+        self.initgamma = gamma
+        self.shock = shock
+        self.period_shock = period_shock
+        self.wait_gamma = wait_gamma
+
         # Randomly assign initial group
         self.assigned_group = self.model.random.choices(
             ["Pro - environment", "Neutral", "Anti - environment"],
-            weights=[1/3, 1/3,1/3]
+            weights=weights
         )[0]
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
@@ -90,6 +97,15 @@ class statusgame_agent(mesa.Agent):
         else:
             return avg_status
         
+    def gamma_introduce(self):
+        if self.wait_gamma:
+            self.gamma = 0
+            if self.model.steps >= self.model.memory:
+                self.gamma = self.initgamma
+                self.wait_gamma = False
+        else:
+            self.gamma = self.initgamma
+        
     def calculate_field_of_action(self):
         # Distances
         l_pro = np.abs(self.consumption - self.belief_min) 
@@ -115,7 +131,7 @@ class statusgame_agent(mesa.Agent):
         # If the difference is within the allowed field, move exactly to the median.
         # Otherwise, move by the maximum allowed amount in the appropriate direction.
         if np.abs(diff) <= self.field_of_action["Neutral"]:
-            self.consumption_neutral = self.belief_median
+            self.consumption_neutral = (self.belief_median) + self.random.uniform(-1,1) # Prevents too many ties
         else:
             # Determine the direction: +1 if we need to increase, -1 if decrease.
             step_direction = 1 if diff > 0 else -1
@@ -138,6 +154,11 @@ class statusgame_agent(mesa.Agent):
             ideal = self.consumption_neutral
 
         self.u_pro = self.lambda_s * status_pro - (1 - self.lambda_s) * np.abs(self.consumption_pro - ideal)
+
+        # Add shock
+        if self.model.steps >= self.period_shock:
+            self.u_pro = self.u_pro * 1 + np.abs(self.u_pro) * self.shock # Ensure that the shock is positive
+        
         self.u_anti = self.lambda_s * status_anti - (1 - self.lambda_s) * np.abs(self.consumption_anti - ideal)
         self.u_neutral = self.lambda_s * status_neutral - (1 - self.lambda_s) * np.abs(self.consumption_neutral - ideal)
 
@@ -158,16 +179,24 @@ class statusgame_agent(mesa.Agent):
                 highest_utility = inertia_option_index
             else:
                 highest_utility = self.model.random.choice(best_options)
+        
+        # Store info
+        self.highest_utility = highest_utility
+        self.utilities = utilities
 
-        if highest_utility == 0:
+        # Method to choose consumption based on the highest utility
+
+    def update_consumption(self):
+
+        if self.highest_utility == 0:
             self.consumption = self.consumption_pro
-        elif highest_utility == 1:
+        elif self.highest_utility == 1:
             self.consumption = self.consumption_anti
         else:
             self.consumption = self.consumption_neutral
 
-        self.highest_utility = highest_utility
-        self.utility = utilities[highest_utility]
+        self.highest_utility = self.highest_utility
+        self.utility = self.utilities[self.highest_utility]
 
     def update_group(self):
         if self.highest_utility == 0:
