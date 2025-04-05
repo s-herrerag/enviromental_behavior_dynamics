@@ -22,12 +22,19 @@ class statusgame_model(mesa.Model):
                  weights = [1/3, 1/3, 1/3],
                  shock = 0, 
                  period_shock = 0, 
-                 wait_gamma = False):
+                 wait_gamma = False, 
+                 fraction_leaders=0,
+                 fraction_attention=0,
+                 beta=0.5):
         super().__init__(seed=seed)
         self.num_agents = N
         self.memory = memory  # Parameter for deleting edges
         self.rho = rho
         self.alpha = alpha
+
+        self.fraction_leaders = fraction_leaders
+        self.fraction_attention = fraction_attention
+        self.beta = beta
 
         if seed_consumption:
             np.random.seed(seed)
@@ -41,6 +48,18 @@ class statusgame_model(mesa.Model):
         # Build list and dict of agents
         self.agents_list = self.agents[:]  # shallow copy of agents list
         self.agents_dict = {agent.unique_id: agent for agent in self.agents}
+
+        # Mark a fraction of them as leaders
+        num_leaders = int(np.floor(self.num_agents * self.fraction_leaders))
+        leader_candidates = self.random.sample(self.agents_list, num_leaders)
+        for ag in leader_candidates:
+            ag.is_leader = True
+
+        # Mark a fraction of them as "paying attention"
+        num_attention = int(np.floor(self.num_agents * self.fraction_attention))
+        attention_candidates = self.random.sample(self.agents_list, num_attention)
+        for ag in attention_candidates:
+            ag.pays_attention = True
 
         # Record of edge creation by step
         self.history_pairs = {}
@@ -180,6 +199,8 @@ class statusgame_model(mesa.Model):
 
             # Now agent i also meets a fraction alpha of j’s neighbors:
             j_neighbors = self.neighbor_sets[j_id]
+            if i_id in j_neighbors:
+                j_neighbors = j_neighbors - {i_id}
             # Compute how many of j’s neighbors to meet:
             n_meet = int(np.floor(self.alpha * len(j_neighbors)))
             if n_meet > 0:

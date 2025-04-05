@@ -33,6 +33,10 @@ class statusgame_agent(mesa.Agent):
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
 
+        # These are modified from the model class
+        self.is_leader = False
+        self.pays_attention = False
+
     def calculate_beliefs(self):
         # Use precomputed neighbor sets if available.
         if hasattr(self.model, "neighbor_sets"):
@@ -44,7 +48,101 @@ class statusgame_agent(mesa.Agent):
         self.belief_max = arr.max()
         self.belief_min = arr.min()
         self.belief_median = np.percentile(arr, 50)
+        
+    def gamma_introduce(self):
+        if self.wait_gamma:
+            self.gamma = 0
+            if self.model.steps > self.model.memory + 1:
+                self.gamma = self.initgamma
+                self.wait_gamma = False
+        else:
+            self.gamma = self.initgamma
+        
+    def calculate_field_of_action(self):
+        # Distances
+        l_pro = np.abs(self.consumption - self.belief_min) 
+        l_anti = np.abs(self.consumption - self.belief_max) 
+        l_neutral = np.abs(self.consumption - self.belief_median)
+        
+        # Fields
+        field_pro = self.gamma * l_pro
+        field_anti = self.gamma * l_anti
+        field_neutral = self.gamma * l_neutral
 
+        self.field_of_action = {"Pro - environment":field_pro, 
+                                "Anti - environment":field_anti, 
+                                "Neutral":field_neutral}
+    
+    def rank_from_perspective(self, consumption_list, self_index, group_perspective):
+        """
+        Ranks consumption_list from the viewpoint of 'group_perspective'.
+        The result is transform_percentage(...) of the agent at self_index.
+        """
+        if group_perspective == "Pro - environment":
+            rankings = stats.rankdata(consumption_list, method="average")
+        elif group_perspective == "Anti - environment":
+            rankings = stats.rankdata([-val for val in consumption_list], method="average")
+        else:  # Neutral
+            if len(consumption_list) < 3:
+                # If only 1 or 2 in the set, we do a degenerate ranking
+                rankings = [1] * len(consumption_list)
+            else:
+                median_val = np.median(consumption_list)
+                diffs = np.abs(np.array(consumption_list) - median_val)
+                rankings = stats.rankdata(diffs, method="average")
+
+        max_rank = np.max(rankings)
+        self_rank = rankings[self_index]
+        return transform_percentage(max_rank, self_rank)
+    
+    def compute_leader_status(self, hypothetical_consumption):
+        """
+        Computes agent i's status from the perspective of *all* leaders in the model,
+        weighting each leader's perspective by distance = 1/(1 + dist(leader, i)).
+
+        We replicate the 'ranking logic' as if the leader is the one classifying
+        pro-/anti-/neutral. The set of individuals we rank is [i plus i's neighbors].
+        """
+        leaders = [a for a in self.model.agents_list if a.is_leader]
+        if not leaders:
+            return 0  # No leaders => no contribution
+
+        # i plus i's neighbors:
+        if hasattr(self.model, "neighbor_sets"):
+            my_neighbors = self.model.neighbor_sets[self.unique_id]
+        else:
+            my_neighbors = self.model.G.neighbors(self.unique_id)
+
+        group_i = list(my_neighbors.union({self.unique_id}))
+
+        sum_w = 0
+        sum_status_w = 0
+
+        for L in leaders:
+            # Distance from i to L
+            dist_iL = nx.shortest_path_length(self.model.G, self.unique_id, L.unique_id)
+            w_L = 1 / (1 + dist_iL)
+
+            # Build consumption array for the group
+            c_list = []
+            for node in group_i:
+                if node == self.unique_id:
+                    c_list.append(hypothetical_consumption)
+                else:
+                    c_list.append(self.model.agents_dict[node].consumption)
+
+            # Rank from L's perspective
+            self_index = group_i.index(self.unique_id)
+            rank_pct = self.rank_from_perspective(c_list, self_index, L.assigned_group)
+
+            sum_status_w += w_L * rank_pct
+            sum_w += w_L
+
+        if sum_w > 0:
+            return sum_status_w / sum_w
+        else:
+            return 0
+    
     def calculate_status_alternative(self, consumption=None, update=True):
         consumption_i = self.consumption if consumption is None else consumption
         # Use precomputed neighbor sets if available.
@@ -87,39 +185,23 @@ class statusgame_agent(mesa.Agent):
             ranking_percentages.append(rank_percentage)
 
         avg_status = np.mean(ranking_percentages) if ranking_percentages else 0
+
+        # Include the potential effect of leadership
+        if self.pays_attention:
+            leader_status = self.compute_leader_status(consumption_i)
+            final_status = self.model.beta * avg_status + (1 - self.model.beta) * leader_status
+        else:
+            final_status = avg_status
+
         if update:
-            self.status = avg_status
+            self.status = final_status
             try:
                 n_common = [0 if x is None else x for x in n_common]
             except TypeError:
                 n_common = [0]
             self.n_common = np.mean(n_common)
         else:
-            return avg_status
-        
-    def gamma_introduce(self):
-        if self.wait_gamma:
-            self.gamma = 0
-            if self.model.steps >= self.model.memory:
-                self.gamma = self.initgamma
-                self.wait_gamma = False
-        else:
-            self.gamma = self.initgamma
-        
-    def calculate_field_of_action(self):
-        # Distances
-        l_pro = np.abs(self.consumption - self.belief_min) 
-        l_anti = np.abs(self.consumption - self.belief_max) 
-        l_neutral = np.abs(self.consumption - self.belief_median)
-        
-        # Fields
-        field_pro = self.gamma * l_pro
-        field_anti = self.gamma * l_anti
-        field_neutral = self.gamma * l_neutral
-
-        self.field_of_action = {"Pro - environment":field_pro, 
-                                "Anti - environment":field_anti, 
-                                "Neutral":field_neutral}
+            return final_status
 
     def choose_consumption_alternative(self):
         # Define the ideal action for each agent, which depends on the field of action

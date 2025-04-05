@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import truncnorm, uniform, norm
 from scipy.optimize import minimize_scalar
+from scipy import stats
 
 def transform_percentage(max_x, x):
     if max_x == 1:
