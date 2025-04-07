@@ -7,7 +7,6 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from scipy.stats import truncnorm, uniform, norm
-from scipy.optimize import minimize_scalar
 from scipy import stats
 
 def transform_percentage(max_x, x):
@@ -26,6 +25,31 @@ def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
     else:
         raise ValueError(f"Unsupported distribution type: {dist_type}")
 
+# Numpy-based rankdata
+def rankdata_average(values):
+    """
+    Return rank with "method='average'" for ties, matching SciPy's 
+    stats.rankdata(..., method='average'). Ranks are 1-based.
+    """
+    arr = np.asarray(values)
+    sorter = np.argsort(arr, kind='mergesort')  # mergesort is stable, like SciPy
+    ranks = np.empty(len(arr), dtype=np.float64)
+
+    start = 0
+    n = len(arr)
+    while start < n:
+        end = start + 1
+        # Extend 'end' to cover all ties with arr[sorter[start]] 
+        while end < n and arr[sorter[end]] == arr[sorter[start]]:
+            end += 1
+        # Average rank for tie group is (start+end+1)/2 in 1-based indexing
+        avg_rank = (start + end + 1) / 2.0
+        for i in range(start, end):
+            ranks[sorter[i]] = avg_rank
+        start = end
+    
+    return ranks
+
 def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_plots=True):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -35,24 +59,20 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
     ax = plt.gca()
 
     for agent_id, df_agent in agent_data.groupby("AgentID"):
-        # Sort so we go in time order
         df_agent = df_agent.sort_values("Step").reset_index(drop=True)
         
-        # Go point by point, drawing a short line from (Step[i], utility[i])
-        # to (Step[i+1], utility[i+1]) in the color of group[i].
         for i in range(len(df_agent) - 1):
             xvals = [df_agent.loc[i, "Step"], df_agent.loc[i+1, "Step"]]
             yvals = [df_agent.loc[i, "utility"], df_agent.loc[i+1, "utility"]]
-
             this_group = df_agent.loc[i, "group"]
             color = color_dict[this_group]
-
             ax.plot(xvals, yvals, color=color, linewidth=0.6, alpha=0.4)
 
-    # Create a custom legend for the group colors:
     unique_groups = agent_data['group'].unique()
-    handles = [plt.Line2D([0], [0], color=color_dict[g], label=g,  marker=None, linewidth=1)
-            for g in unique_groups]
+    handles = [
+        plt.Line2D([0], [0], color=color_dict[g], label=g, marker=None, linewidth=1)
+        for g in unique_groups
+    ]
     ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
 
     plt.title("All Agents' Utilities Over Time")
@@ -69,25 +89,18 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
     ax = plt.gca()
 
     for agent_id, df_agent in agent_data.groupby("AgentID"):
-        # Sort so we go in time order
         df_agent = df_agent.sort_values("Step").reset_index(drop=True)
         
-        # Go point by point, drawing a short line from (Step[i], consumption[i])
-        # to (Step[i+1], consumption[i+1]) in the color of group[i].
         for i in range(len(df_agent) - 1):
             xvals = [df_agent.loc[i, "Step"], df_agent.loc[i+1, "Step"]]
             yvals = [df_agent.loc[i, "consumption"], df_agent.loc[i+1, "consumption"]]
-
             this_group = df_agent.loc[i, "group"]
             color = color_dict[this_group]
-
             ax.plot(xvals, yvals, color=color, linewidth=0.6, alpha=0.4)
 
-    # Create a custom legend for the group colors
     unique_groups = agent_data["group"].unique()
     handles = [
-        plt.Line2D([0], [0], color=color_dict[g], label=g, marker=None,
-                linewidth=1)
+        plt.Line2D([0], [0], color=color_dict[g], label=g, marker=None, linewidth=1)
         for g in unique_groups
     ]
     ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -97,7 +110,8 @@ def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_pl
     plt.ylabel("Consumption (All agents)")
     plt.tight_layout()
     plt.savefig(os.path.join(output_folder, "individual_consumptions.pdf"), bbox_inches='tight', dpi=300)
-    plt.show()
+    if show_plots:
+        plt.show()
     plt.close()
 
     # Plot 3: Average utilities

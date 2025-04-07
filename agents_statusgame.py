@@ -4,8 +4,8 @@
 import mesa
 import numpy as np
 from scipy import stats
-import networkx as nx 
-from helpers import get_distribution, transform_percentage
+import networkx as nx
+from helpers import get_distribution, transform_percentage, rankdata_average
 
 # Distribution for initial consumption
 consumption_dist = get_distribution(dist_type="uniform", lower=0, upper=100)
@@ -33,7 +33,6 @@ class statusgame_agent(mesa.Agent):
         self.consumption = consumption_dist.rvs(size=1)[0]
         self.status = None
 
-        # These are modified from the model class
         self.is_leader = False
         self.pays_attention = False
 
@@ -52,7 +51,7 @@ class statusgame_agent(mesa.Agent):
     def gamma_introduce(self):
         if self.wait_gamma:
             self.gamma = 0
-            if self.model.steps > self.model.memory + 1:
+            if self.model.steps > self.model.memory * 2:
                 self.gamma = self.initgamma
                 self.wait_gamma = False
         else:
@@ -69,27 +68,31 @@ class statusgame_agent(mesa.Agent):
         field_anti = self.gamma * l_anti
         field_neutral = self.gamma * l_neutral
 
-        self.field_of_action = {"Pro - environment":field_pro, 
-                                "Anti - environment":field_anti, 
-                                "Neutral":field_neutral}
+        self.field_of_action = {
+            "Pro - environment": field_pro, 
+            "Anti - environment": field_anti, 
+            "Neutral": field_neutral
+        }
     
     def rank_from_perspective(self, consumption_list, self_index, group_perspective):
         """
-        Ranks consumption_list from the viewpoint of 'group_perspective'.
-        The result is transform_percentage(...) of the agent at self_index.
+        Ranks consumption_list from viewpoint of 'group_perspective'.
+        Returns transform_percentage(...) of the agent at self_index.
         """
         if group_perspective == "Pro - environment":
-            rankings = stats.rankdata(consumption_list, method="average")
+            # Use our custom rankdata_average instead of stats.rankdata
+            rankings = rankdata_average(consumption_list)
         elif group_perspective == "Anti - environment":
-            rankings = stats.rankdata([-val for val in consumption_list], method="average")
-        else:  # Neutral
+            # Negate to rank higher consumption as lower
+            rankings = rankdata_average([-val for val in consumption_list])
+        else:  # "Neutral"
             if len(consumption_list) < 3:
-                # If only 1 or 2 in the set, we do a degenerate ranking
+                # Degenerate ranking if only 1 or 2 in the set
                 rankings = [1] * len(consumption_list)
             else:
                 median_val = np.median(consumption_list)
                 diffs = np.abs(np.array(consumption_list) - median_val)
-                rankings = stats.rankdata(diffs, method="average")
+                rankings = rankdata_average(diffs)
 
         max_rank = np.max(rankings)
         self_rank = rankings[self_index]
@@ -97,11 +100,10 @@ class statusgame_agent(mesa.Agent):
     
     def compute_leader_status(self, hypothetical_consumption):
         """
-        Computes agent i's status from the perspective of *all* leaders in the model,
-        weighting each leader's perspective by distance = 1/(1 + dist(leader, i)).
-
-        We replicate the 'ranking logic' as if the leader is the one classifying
-        pro-/anti-/neutral. The set of individuals we rank is [i plus i's neighbors].
+        Computes agent i's status from perspective of *all* leaders in the model,
+        weighting each leader's perspective by 1/(1 + dist(leader, i)).
+        We now fetch BFS distances from self.model.distance_from_leader,
+        rather than calling nx.shortest_path_length repeatedly.
         """
         leaders = [a for a in self.model.agents_list if a.is_leader]
         if not leaders:
@@ -112,18 +114,21 @@ class statusgame_agent(mesa.Agent):
             my_neighbors = self.model.neighbor_sets[self.unique_id]
         else:
             my_neighbors = self.model.G.neighbors(self.unique_id)
-
         group_i = list(my_neighbors.union({self.unique_id}))
 
         sum_w = 0
         sum_status_w = 0
 
         for L in leaders:
-            # Distance from i to L
-            dist_iL = nx.shortest_path_length(self.model.G, self.unique_id, L.unique_id)
+            # Distance from i to L via cached BFS
+            dist_iL = self.model.distance_from_leader.get((L.unique_id, self.unique_id), None)
+            if dist_iL is None:
+                # If no path, skip or treat as effectively 0 weight
+                # (assuming your graph is connected, you can skip this check)
+                continue
             w_L = 1 / (1 + dist_iL)
 
-            # Build consumption array for the group
+            # Build consumption array
             c_list = []
             for node in group_i:
                 if node == self.unique_id:
@@ -145,40 +150,50 @@ class statusgame_agent(mesa.Agent):
     
     def calculate_status_alternative(self, consumption=None, update=True):
         consumption_i = self.consumption if consumption is None else consumption
-        # Use precomputed neighbor sets if available.
+
+        # Precompute neighbors_i_incl_self once
         if hasattr(self.model, "neighbor_sets"):
-            neighbors_i = set(self.model.neighbor_sets[self.unique_id])
+            neighbors_i = self.model.neighbor_sets[self.unique_id]
         else:
             neighbors_i = set(self.model.G.neighbors(self.unique_id))
+        neighbors_i_incl_self = neighbors_i.union({self.unique_id})
+
         ranking_percentages = []
 
-        n_common = []
         for j_id in neighbors_i:
             j_agent = self.model.agents_dict[j_id]
-            neighbors_j = set(self.model.G.neighbors(j_id))
-            common_nodes = (neighbors_i.union({self.unique_id})).intersection(neighbors_j)
-            common_nodes_list = list(common_nodes)
-            n_common.append(len(common_nodes_list))
+
+            # Intersection with j's neighbors
+            neighbors_j = self.model.neighbor_sets[j_id] if hasattr(self.model, "neighbor_sets") else set(self.model.G.neighbors(j_id))
+            common_nodes_list = list(neighbors_i_incl_self.intersection(neighbors_j))
+
             try:
                 index_self = common_nodes_list.index(self.unique_id)
             except ValueError:
+                # If self isn't in the intersection, skip
                 continue
-            common_consumptions = [
-                consumption_i if node_id == self.unique_id
-                else self.model.agents_dict[node_id].consumption
-                for node_id in common_nodes_list
-            ]
+
+            # Build consumption array for common_nodes_list
+            common_consumptions = []
+            for node_id in common_nodes_list:
+                if node_id == self.unique_id:
+                    common_consumptions.append(consumption_i)
+                else:
+                    common_consumptions.append(self.model.agents_dict[node_id].consumption)
+
+            # Rank from j_agent's perspective
             if j_agent.assigned_group == "Pro - environment":
-                rankings = stats.rankdata(common_consumptions, method="average")
+                rankings = rankdata_average(common_consumptions)
             elif j_agent.assigned_group == "Anti - environment":
-                rankings = stats.rankdata([-val for val in common_consumptions], method="average")
-            elif j_agent.assigned_group == "Neutral":
+                rankings = rankdata_average([-val for val in common_consumptions])
+            else:  # "Neutral"
                 if len(common_consumptions) < 3:
-                   rankings = [1] * len(common_consumptions)
+                    rankings = [1] * len(common_consumptions)
                 else:
                     median_value = np.median(common_consumptions)
                     differences = np.abs(np.array(common_consumptions) - median_value)
-                    rankings = stats.rankdata(differences, method="average")
+                    rankings = rankdata_average(differences)
+
             max_rank = np.max(rankings)
             self_rank = rankings[index_self]
             rank_percentage = transform_percentage(max_rank, self_rank)
@@ -186,7 +201,7 @@ class statusgame_agent(mesa.Agent):
 
         avg_status = np.mean(ranking_percentages) if ranking_percentages else 0
 
-        # Include the potential effect of leadership
+        # Potential effect of leadership
         if self.pays_attention:
             leader_status = self.compute_leader_status(consumption_i)
             final_status = self.model.beta * avg_status + (1 - self.model.beta) * leader_status
@@ -195,31 +210,22 @@ class statusgame_agent(mesa.Agent):
 
         if update:
             self.status = final_status
-            try:
-                n_common = [0 if x is None else x for x in n_common]
-            except TypeError:
-                n_common = [0]
-            self.n_common = np.mean(n_common)
         else:
             return final_status
 
     def choose_consumption_alternative(self):
-        # Define the ideal action for each agent, which depends on the field of action
+        # Determine "ideal" moves
         self.consumption_pro = self.consumption - self.field_of_action["Pro - environment"] - 1 
         self.consumption_anti = self.consumption + self.field_of_action["Anti - environment"] + 1
-        
-        # Calculate the difference between the median and the current consumption
+
         diff = self.belief_median - self.consumption
-        # If the difference is within the allowed field, move exactly to the median.
-        # Otherwise, move by the maximum allowed amount in the appropriate direction.
         if np.abs(diff) <= self.field_of_action["Neutral"]:
-            self.consumption_neutral = (self.belief_median) + self.random.uniform(-1,1) # Prevents too many ties
+            self.consumption_neutral = (self.belief_median) + self.random.uniform(-1,1)
         else:
-            # Determine the direction: +1 if we need to increase, -1 if decrease.
             step_direction = 1 if diff > 0 else -1
             self.consumption_neutral = self.consumption + step_direction * self.field_of_action["Neutral"]
 
-        # Calculate the status for each alternative
+        # Calculate status for each hypothetical consumption
         status_pro = self.calculate_status_alternative(consumption=self.consumption_pro, update=False)
         status_anti = self.calculate_status_alternative(consumption=self.consumption_anti, update=False)
         status_neutral = self.calculate_status_alternative(consumption=self.consumption_neutral, update=False)
@@ -236,10 +242,8 @@ class statusgame_agent(mesa.Agent):
             ideal = self.consumption_neutral
 
         self.u_pro = self.lambda_s * status_pro - (1 - self.lambda_s) * np.abs(self.consumption_pro - ideal)
-
-        # Add shock
         if self.model.steps >= self.period_shock:
-            self.u_pro = self.u_pro * 1 + np.abs(self.u_pro) * self.shock # Ensure that the shock is positive
+            self.u_pro = self.u_pro * 1 + np.abs(self.u_pro) * self.shock
         
         self.u_anti = self.lambda_s * status_anti - (1 - self.lambda_s) * np.abs(self.consumption_anti - ideal)
         self.u_neutral = self.lambda_s * status_neutral - (1 - self.lambda_s) * np.abs(self.consumption_neutral - ideal)
@@ -251,6 +255,7 @@ class statusgame_agent(mesa.Agent):
         if len(best_options) == 1:
             highest_utility = best_options[0]
         else:
+            # Tie-breaking by "inertia" preference
             if ideal == self.consumption_pro:
                 inertia_option_index = 0
             elif ideal == self.consumption_anti:
@@ -262,14 +267,10 @@ class statusgame_agent(mesa.Agent):
             else:
                 highest_utility = self.model.random.choice(best_options)
         
-        # Store info
         self.highest_utility = highest_utility
         self.utilities = utilities
 
-        # Method to choose consumption based on the highest utility
-
     def update_consumption(self):
-
         if self.highest_utility == 0:
             self.consumption = self.consumption_pro
         elif self.highest_utility == 1:
@@ -277,7 +278,6 @@ class statusgame_agent(mesa.Agent):
         else:
             self.consumption = self.consumption_neutral
 
-        self.highest_utility = self.highest_utility
         self.utility = self.utilities[self.highest_utility]
 
     def update_group(self):
