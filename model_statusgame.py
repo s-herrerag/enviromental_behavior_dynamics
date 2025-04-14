@@ -25,7 +25,10 @@ class statusgame_model(mesa.Model):
                  wait_gamma = False, 
                  fraction_leaders=0,
                  fraction_attention=0,
-                 beta=0.5):
+                 must_be_pro_fraction = 0.5,
+                 beta=0.5, 
+                 consumption_dist="consumption_dist"
+                 ):
         super().__init__(seed=seed)
         self.num_agents = N
         self.memory = memory
@@ -48,7 +51,8 @@ class statusgame_model(mesa.Model):
             weights=weights,
             shock=shock,
             period_shock=period_shock,
-            wait_gamma=wait_gamma
+            wait_gamma=wait_gamma, 
+            consumption_dist=consumption_dist,
         )
 
         self.agents_list = self.agents[:]
@@ -56,7 +60,31 @@ class statusgame_model(mesa.Model):
 
         # Mark a fraction as leaders
         num_leaders = int(np.floor(self.num_agents * self.fraction_leaders))
-        leader_candidates = self.random.sample(self.agents_list, num_leaders)
+
+        # Suppose we want half the leaders from the Pro - environment group
+        num_leaders_pro = int(np.floor(num_leaders * must_be_pro_fraction))
+        num_leaders_other = num_leaders - num_leaders_pro
+
+        # Separate agents by group
+        pro_agents = [ag for ag in self.agents_list if ag.assigned_group == "Pro - environment"]
+        other_agents = [ag for ag in self.agents_list if ag.assigned_group != "Pro - environment"]
+
+        # Randomly sample from each subset
+        if len(pro_agents) >= num_leaders_pro:
+            leader_candidates_pro = self.random.sample(pro_agents, num_leaders_pro)
+        else:
+            # If not enough Pro agents, pick them all
+            leader_candidates_pro = pro_agents
+
+        if len(other_agents) >= num_leaders_other:
+            leader_candidates_other = self.random.sample(other_agents, num_leaders_other)
+        else:
+            # If not enough other agents, pick them all
+            leader_candidates_other = other_agents
+
+        leader_candidates = leader_candidates_pro + leader_candidates_other
+
+        # Assign is_leader = True
         for ag in leader_candidates:
             ag.is_leader = True
 
@@ -130,7 +158,9 @@ class statusgame_model(mesa.Model):
                 #"status_pro": "status_pro",
                 #"status_anti": "status_anti",
                 #"status_neutral": "status_neutral",
-                #"degree": lambda a: a.model.G.degree(a.unique_id)
+                #"degree": lambda a: a.model.G.degree(a.unique_id), 
+                "is_leader": "is_leader",
+                "pays_attention": "pays_attention",
             }
         )
         self.datacollector.collect(self)

@@ -8,7 +8,12 @@ import networkx as nx
 from helpers import get_distribution, transform_percentage, rankdata_average
 
 # Distribution for initial consumption
-consumption_dist = get_distribution(dist_type="uniform", lower=0, upper=100)
+consumption_regular = get_distribution(dist_type="uniform", lower=0, upper=100)
+consumption_for_gamma = get_distribution(dist_type="uniform", lower=0, upper=10000)
+
+dist_c = {"consumption_dist": consumption_regular, 
+          "gamma_dist": consumption_for_gamma}
+
 
 class statusgame_agent(mesa.Agent):
     """
@@ -16,7 +21,8 @@ class statusgame_agent(mesa.Agent):
     """
     def __init__(self, model, lambda_s=1, gamma=1, wait_gamma=False,
                  shock = 0, period_shock = 0, 
-                 weights = [1/3, 1/3, 1/3]):
+                 weights = [1/3, 1/3, 1/3], 
+                 consumption_dist="consumption_dist"):
         
         super().__init__(model)
         self.lambda_s = lambda_s
@@ -30,7 +36,7 @@ class statusgame_agent(mesa.Agent):
             ["Pro - environment", "Neutral", "Anti - environment"],
             weights=weights
         )[0]
-        self.consumption = consumption_dist.rvs(size=1)[0]
+        self.consumption = dist_c[consumption_dist].rvs(size=1)[0]
         self.status = None
 
         self.is_leader = False
