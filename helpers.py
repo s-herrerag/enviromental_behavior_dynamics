@@ -1,31 +1,20 @@
 #########################
 # Helpers for the ABMs
 #########################
-
+import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
 import numpy as np
-from scipy.stats import truncnorm, uniform, norm  # Import other distributions as needed
-from scipy.optimize import minimize_scalar
+from scipy.stats import truncnorm, uniform, norm
+from scipy import stats
 
-
-
-
-### Distribution of initial consumption ------------------------
+def transform_percentage(max_x, x):
+    if max_x == 1:
+        return 0
+    return 100 * (max_x - x) / (max_x - 1)
 
 def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
-    """
-    Factory function to create different distribution objects.
-
-    Parameters:
-    - dist_type (str): Type of distribution ('truncnorm', 'uniform', 'normal', etc.)
-    - mu (float): Mean of the distribution (used for normal and truncnorm)
-    - sigma (float): Standard deviation (used for normal and truncnorm)
-    - lower (float): Lower bound (used for truncnorm and uniform)
-    - upper (float): Upper bound (used for truncnorm and uniform)
-    - **kwargs: Additional keyword arguments for specific distributions
-
-    Returns:
-    - A scipy.stats distribution object
-    """
     if dist_type == 'truncnorm':
         a, b = (lower - mu) / sigma, (upper - mu) / sigma
         return truncnorm(a, b, loc=mu, scale=sigma)
@@ -33,73 +22,174 @@ def get_distribution(dist_type, mu=55, sigma=15, lower=10, upper=100, **kwargs):
         return uniform(loc=lower, scale=upper - lower)
     elif dist_type == 'normal':
         return norm(loc=mu, scale=sigma)
-    # Add more distributions as needed
     else:
         raise ValueError(f"Unsupported distribution type: {dist_type}")
 
-
-
-### Estimation of the mode ------------------------
-def calculate_mode_hist_midpoint(array, bins=10):
+# Numpy-based rankdata
+def rankdata_average(values):
     """
-    Calculate the mode of an array by finding the midpoint of the histogram bin with the highest frequency.
-
-    Parameters:
-    - array (list or numpy array): The input data.
-    - bins (int): Number of bins to use for the histogram.
-
-    Returns:
-    - mode (float): The estimated mode as the midpoint of the most frequent bin.
+    Return rank with "method='average'" for ties, matching SciPy's 
+    stats.rankdata(..., method='average'). Ranks are 1-based.
     """
-    if len(array) == 0 or not array:
-        return None  # Handle empty array by returning None
+    arr = np.asarray(values)
+    sorter = np.argsort(arr, kind='mergesort')  # mergesort is stable, like SciPy
+    ranks = np.empty(len(arr), dtype=np.float64)
 
-    counts, bin_edges = np.histogram(array, bins=bins)
-    max_bin_index = np.argmax(counts)
-    mode = (bin_edges[max_bin_index] + bin_edges[max_bin_index + 1]) / 2
-    return mode
+    start = 0
+    n = len(arr)
+    while start < n:
+        end = start + 1
+        # Extend 'end' to cover all ties with arr[sorter[start]] 
+        while end < n and arr[sorter[end]] == arr[sorter[start]]:
+            end += 1
+        # Average rank for tie group is (start+end+1)/2 in 1-based indexing
+        avg_rank = (start + end + 1) / 2.0
+        for i in range(start, end):
+            ranks[sorter[i]] = avg_rank
+        start = end
+    
+    return ranks
 
+def plot_all_agent_graphs(agent_data, color_dict, output_folder="plots", show_plots=True):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # Plot 1: Individual utilities
+    plt.figure(figsize=(7, 5))
+    ax = plt.gca()
 
-### Maximization of utility ------------------------
+    for agent_id, df_agent in agent_data.groupby("AgentID"):
+        df_agent = df_agent.sort_values("Step").reset_index(drop=True)
+        
+        for i in range(len(df_agent) - 1):
+            xvals = [df_agent.loc[i, "Step"], df_agent.loc[i+1, "Step"]]
+            yvals = [df_agent.loc[i, "utility"], df_agent.loc[i+1, "utility"]]
+            this_group = df_agent.loc[i, "group"]
+            color = color_dict[this_group]
+            ax.plot(xvals, yvals, color=color, linewidth=0.6, alpha=0.4)
 
-def g_anti(x):
-    return 0
+    unique_groups = agent_data['group'].unique()
+    handles = [
+        plt.Line2D([0], [0], color=color_dict[g], label=g, marker=None, linewidth=1)
+        for g in unique_groups
+    ]
+    ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
 
-def g_pro(x):
-    return 0
+    plt.title("All Agents' Utilities Over Time")
+    plt.xlabel("Time Step")
+    plt.ylabel("Utility (All agents)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "individual_utilities.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
+    plt.close()
+    
+    # Plot 2: Individual consumptions
+    plt.figure(figsize=(7, 5))
+    ax = plt.gca()
 
-def g_neutral(x):
-    return 0
+    for agent_id, df_agent in agent_data.groupby("AgentID"):
+        df_agent = df_agent.sort_values("Step").reset_index(drop=True)
+        
+        for i in range(len(df_agent) - 1):
+            xvals = [df_agent.loc[i, "Step"], df_agent.loc[i+1, "Step"]]
+            yvals = [df_agent.loc[i, "consumption"], df_agent.loc[i+1, "consumption"]]
+            this_group = df_agent.loc[i, "group"]
+            color = color_dict[this_group]
+            ax.plot(xvals, yvals, color=color, linewidth=0.6, alpha=0.4)
 
-def maximize_utility(x_hat, g, lambda1, lambda2, s_i):
-    # Define the original function u(x) using the passed g(x)
-    """
-    Find the value of x that maximizes the utility function u(x) = lambda1 * x + lambda2 * s_i + (1 - lambda1 - lambda2) * misalignment_cost,
-    where misalignment_cost = -(x - x_hat)**2 + g(x).
+    unique_groups = agent_data["group"].unique()
+    handles = [
+        plt.Line2D([0], [0], color=color_dict[g], label=g, marker=None, linewidth=1)
+        for g in unique_groups
+    ]
+    ax.legend(handles=handles, title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
 
-    Parameters:
-    - x_hat (float): The believed estimate of the distribution
-    - g (callable): The function g(x) that is used in the misalignment cost
-    - lambda1 (float): The weight of the linear term in the utility
-    - lambda2 (float): The weight of the social influence term in the utility
-    - s_i (float): The status
+    plt.title("All Agents' Consumptions Over Time")
+    plt.xlabel("Time Step")
+    plt.ylabel("Consumption (All agents)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "individual_consumptions.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
+    plt.close()
 
-    Returns:
-    - x_max (float): The value of x that maximizes the utility
-
-    Raises:
-    - ValueError: If the optimization fails
-    """
-    def u(x):
-        misalignment_cost = - (x - x_hat)**2 + g(x)
-        return lambda1 * x + lambda2 * s_i + (1 - lambda1 - lambda2) * misalignment_cost
-    def neg_u(x):
-        return -u(x)
-    result = minimize_scalar(neg_u, bounds=(0, 20000), method='bounded')
-    if result.success:
-        x_max = result.x
-        return x_max
-    else:
-        raise ValueError("Optimization failed: " + result.message)
-
-
+    # Plot 3: Average utilities
+    plt.figure(figsize=(7, 5))
+    sns.lineplot(
+        data=agent_data,
+        x='Step',
+        y='utility',
+        hue='group',
+        legend='full',
+        linewidth=0.8,
+        alpha=1,
+        estimator="average",
+        palette=color_dict
+    )
+    plt.title("Agents' Average Utilities Over Time")
+    plt.xlabel("Time Step")
+    plt.ylabel("Utility (Avg)")
+    plt.legend(title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "average_utilities.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
+    plt.close()
+    
+    # Plot 4: Average consumptions
+    plt.figure(figsize=(7, 5))
+    sns.lineplot(
+        data=agent_data,
+        x='Step',
+        y='consumption',
+        hue='group',
+        legend='full',
+        linewidth=0.6,
+        alpha=1,
+        estimator="average",
+        palette=color_dict
+    )
+    plt.title("Agents' Average Consumptions Over Time")
+    plt.xlabel("Time Step")
+    plt.ylabel("Consumption (Avg)")
+    plt.legend(title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "average_consumptions.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
+    plt.close()
+    
+    # Plot 5: Group shares
+    N = agent_data['AgentID'].nunique()
+    group_shares = agent_data.groupby(['Step', 'group'])['AgentID'].count().reset_index()
+    group_shares['Share'] = group_shares['AgentID'] * 100 / N
+    pivoted_shares = group_shares.pivot(index='Step', columns='group', values='Share').fillna(0)
+    
+    steps_stack = pivoted_shares.index.tolist()
+    anti_stack = pivoted_shares.get('Anti - environment', pd.Series(0, index=pivoted_shares.index)).tolist()
+    neutral_stack = pivoted_shares.get('Neutral', pd.Series(0, index=pivoted_shares.index)).tolist()
+    pro_stack = pivoted_shares.get('Pro - environment', pd.Series(0, index=pivoted_shares.index)).tolist()
+    
+    plt.figure(figsize=(7, 5))
+    plt.stackplot(
+        steps_stack,
+        anti_stack,
+        neutral_stack,
+        pro_stack,
+        labels=['Anti - environment', 'Neutral', 'Pro - environment'],
+        colors=[
+            color_dict.get('Anti - environment', 'blue'),
+            color_dict.get('Neutral', 'gray'),
+            color_dict.get('Pro - environment', 'green')
+        ]
+    )
+    plt.title("Size of Groups Over Time")
+    plt.xlabel("Time Step")
+    plt.ylabel("Share (%)")
+    plt.legend(title='Group', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_folder, "group_shares_noeffort.pdf"), bbox_inches='tight', dpi=300)
+    if show_plots:
+        plt.show()
+    plt.close()
